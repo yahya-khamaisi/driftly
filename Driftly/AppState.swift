@@ -39,7 +39,8 @@ final class AppState: ObservableObject {
         registerHotKey()
         if config.wasActive { setActive(true) }
 
-        let t = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
+        // 4 Hz keeps moves within ~0.25s of the configured interval.
+        let t = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
         RunLoop.main.add(t, forMode: .common)
@@ -155,9 +156,10 @@ final class AppState: ObservableObject {
         ringProgress = gap > 0 ? 1 - remaining / gap : 1
         guard !cycling, remaining == 0 else { return }
         cycling = true
+        let started = now   // interval runs start-to-start, so glide time doesn't stretch it
         Task {
             await mover.cycle(config)
-            lastCycle = Date()
+            lastCycle = started
             rollTiming()
             cycling = false
         }

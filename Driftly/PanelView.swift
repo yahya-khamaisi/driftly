@@ -144,7 +144,7 @@ struct StatusRow: View {
             .tint(state.isActive ? Color.accentColor : Color.secondary)
             .scaleEffect(0.62)
             .frame(width: 36, height: 36)
-            .animation(.linear(duration: 1), value: state.ringProgress)
+            .animation(.linear(duration: 0.25), value: state.ringProgress)
             .accessibilityLabel(state.isActive ? "Time until next move" : "Driftly is off")
             .accessibilityValue(Text("\(Int(state.ringProgress * 100)) percent"))
 
