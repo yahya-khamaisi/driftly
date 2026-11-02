@@ -50,7 +50,7 @@ A native macOS menu-bar app that keeps your Mac active by gently moving the curs
 2. Choose your signing team.
 3. Run.
 
-The first time you turn Driftly on, macOS asks for two permissions:
+On first launch a welcome panel opens under the menu bar and walks you through two permissions:
 
 - **Accessibility:** to move the cursor, click and scroll.
 - **Input Monitoring:** to notice when you're typing, so Driftly stays out of the way.

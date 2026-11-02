@@ -139,10 +139,11 @@ struct PermissionRow: View {
                     .symbolRenderingMode(.multicolor)
                     .foregroundStyle(.secondary)
             } else {
-                Button("Open Settings…") {
+                Button("Allow…") {
                     InputPoster.requestAccess()
                     Permissions.open(pane)
                 }
+                .help("Opens Privacy & Security in System Settings")
             }
         } label: {
             Text(title)

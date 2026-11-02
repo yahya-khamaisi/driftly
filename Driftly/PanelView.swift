@@ -1,20 +1,26 @@
 import AppKit
 import SwiftUI
 
-enum PanelPage { case main, settings }
+enum PanelPage { case onboarding, main, settings }
 
 /// The whole app UI: one menu-bar panel. Settings slides in over the main page.
 struct PanelView: View {
     @State var page: PanelPage
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(initialPage: PanelPage = .main) {
-        _page = State(initialValue: initialPage)
+    init(initialPage: PanelPage? = nil) {
+        _page = State(initialValue: initialPage ?? (Onboarding.isComplete ? .main : .onboarding))
     }
 
     var body: some View {
         ZStack(alignment: .top) {
             switch page {
+            case .onboarding:
+                OnboardingPage(done: {
+                    Onboarding.finish()
+                    go(.main)
+                })
+                .transition(.opacity)
             case .main:
                 MainPage(openSettings: { go(.settings) })
                     .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))

@@ -1,0 +1,87 @@
+{
+  "fill-specializations": [
+    {
+      "value": {
+        "linear-gradient": [
+          "display-p3:0.33000,0.66000,1.00000,1.00000",
+          "display-p3:0.13000,0.35000,0.93000,1.00000"
+        ]
+      }
+    },
+    {
+      "appearance": "dark",
+      "value": {
+        "linear-gradient": [
+          "display-p3:0.17000,0.18000,0.21000,1.00000",
+          "display-p3:0.07000,0.08000,0.10000,1.00000"
+        ]
+      }
+    }
+  ],
+  "groups": [
+    {
+      "layers": [
+        {
+          "fill-specializations": [
+            {
+              "value": "automatic"
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "display-p3:0.40000,0.70000,1.00000,1.00000"
+              }
+            }
+          ],
+          "glass": true,
+          "image-name": "cursor.svg",
+          "name": "cursor"
+        }
+      ],
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": true,
+        "value": 0.3
+      }
+    },
+    {
+      "layers": [
+        {
+          "fill-specializations": [
+            {
+              "value": "automatic"
+            },
+            {
+              "appearance": "dark",
+              "value": {
+                "solid": "display-p3:0.40000,0.70000,1.00000,1.00000"
+              }
+            }
+          ],
+          "glass": false,
+          "image-name": "trail.svg",
+          "name": "trail",
+          "opacity": 0.85
+        }
+      ],
+      "shadow": {
+        "kind": "none",
+        "opacity": 0.5
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

@@ -54,7 +54,5 @@ Any real input during a cycle aborts it immediately.
 
 ## 4. Known follow-ups
 
-- First-run onboarding that explains both permissions before the system prompts.
 - Verify the menu-detection heuristic doesn't cause permanent pauses with third-party menu-bar apps.
 - Localization.
-- App icon artwork (the asset catalog has an empty `AppIcon`).
