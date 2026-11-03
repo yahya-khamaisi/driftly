@@ -72,21 +72,26 @@ final class SystemPauses {
     }
 }
 
-/// Keeps the display awake while jiggling ("Prevent Sleep While Active").
+/// Keeps the Mac awake during a session: always the system, and the display unless it may sleep.
 final class PowerAssertion {
-    private var id: IOPMAssertionID = 0
-    private var held = false
+    private var systemID: IOPMAssertionID?
+    private var displayID: IOPMAssertionID?
 
-    func hold(_ on: Bool) {
-        guard on != held else { return }
-        if on {
-            held = IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep as CFString,
-                                               IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                                               "Keeping Mac awake while active" as CFString,
-                                               &id) == kIOReturnSuccess
-        } else {
-            IOPMAssertionRelease(id)
-            held = false
+    func hold(system: Bool, display: Bool) {
+        update(&systemID, on: system, type: kIOPMAssertionTypePreventUserIdleSystemSleep)
+        update(&displayID, on: display, type: kIOPMAssertionTypePreventUserIdleDisplaySleep)
+    }
+
+    private func update(_ id: inout IOPMAssertionID?, on: Bool, type: String) {
+        if on, id == nil {
+            var new: IOPMAssertionID = 0
+            if IOPMAssertionCreateWithName(type as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
+                                           "Driftly session" as CFString, &new) == kIOReturnSuccess {
+                id = new
+            }
+        } else if !on, let current = id {
+            IOPMAssertionRelease(current)
+            id = nil
         }
     }
 

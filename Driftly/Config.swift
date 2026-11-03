@@ -72,29 +72,44 @@ enum ScrollAxis: String, Codable, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
-enum AppRule: String, Codable, CaseIterable, Identifiable {
-    case isRunning, inFront, notInFront
-    var id: Self { self }
-}
-
-enum DeactivateKind: String, Codable, CaseIterable, Identifiable {
-    case at, after
-    var id: Self { self }
-}
-
-struct ClockTime: Codable, Equatable {
+struct ClockTime: Codable, Hashable {
     var hour: Int
     var minute: Int
     var minutes: Int { hour * 60 + minute }
 }
 
+/// How long a manually started session lasts. Triggered sessions last while their trigger matches.
+enum SessionLength: Codable, Hashable {
+    case indefinitely
+    case minutes(Int)
+    case untilTime            // uses `Config.untilTime`
+
+    static let presets: [SessionLength] = [.minutes(15), .minutes(30), .minutes(60), .minutes(120),
+                                           .minutes(240), .minutes(480)]
+}
+
+enum DisplayMode: String, Codable, CaseIterable, Identifiable {
+    case stayOn, canSleep
+    var id: Self { self }
+}
+
+enum LockBehavior: String, Codable, CaseIterable, Identifiable {
+    case pause, keepGoing
+    var id: Self { self }
+}
+
 /// Everything the user can configure. Persisted as JSON in UserDefaults.
 struct Config: Codable, Equatable {
-    // Modes
+    // Session
+    var length: SessionLength = .indefinitely
+    var untilTime = ClockTime(hour: 17, minute: 30)
+    var display: DisplayMode = .stayOn
+    var triggers: [Trigger] = []
+
+    // Simulate activity
+    var simulateActivity = true
     var naturalMode = false
     var silentMode = false
-
-    // Core
     var startAfterIdle: TimeInterval = 30
     var interval: TimeInterval = 10          // 0 = continuous
     var range: MovementRange = .medium
@@ -103,32 +118,23 @@ struct Config: Codable, Equatable {
     var scroll: ScrollAxis = .none
     var keyPress = false
 
-    // Schedule
-    var scheduleEnabled = false
-    var scheduleFrom = ClockTime(hour: 9, minute: 0)
-    var scheduleTo = ClockTime(hour: 18, minute: 0)
-    var scheduleDays: Set<Int> = [2, 3, 4, 5, 6]   // Calendar weekday, 1 = Sunday
-
-    // Deactivate
-    var deactivateEnabled = false
-    var deactivateKind: DeactivateKind = .at
-    var deactivateAt = ClockTime(hour: 18, minute: 0)
-    var deactivateAfter: TimeInterval = 3600
-
-    // Only While App
-    var appRuleEnabled = false
-    var appRule: AppRule = .isRunning
-    var appBundleIDs: [String] = []
-
-    // System
-    var pauseWhenLocked = true
-    var preventSleep = false
-    var batteryCutoff = 5                    // % — deactivate when on battery and below this; 0 = off
-    var launchAtLogin = false
-    var wasActive = false                    // restored on launch ("if it was already active")
+    // Menu bar
     var menuIcon: MenuIcon = .cursor
+    var showTimeLeft = true
     var dimWhenIdle = true
+
+    // General
     var shortcut = Shortcut.default
+    var launchAtLogin = false
+    var notifyOnEnd = true
+    var wasActive = false                    // restored on launch ("if it was already active")
+
+    // Power
+    var whenLocked: LockBehavior = .pause
+    var lockAfterIdle: TimeInterval = 0      // 0 = never
+    var batteryCutoff = 5                    // % — end the session on battery below this; 0 = never
+    var keepDriveName: String?
+    var keepDriveBookmark: Data?
 
     var mode: MoveMode {
         get { silentMode ? .silent : naturalMode ? .natural : .standard }
@@ -138,11 +144,24 @@ struct Config: Codable, Equatable {
         }
     }
 
-    private static let key = "config.v1"
+    private static let key = "config.v2"
+    private static let legacyKey = "config.v1"
 
+    /// Decodes whatever is stored over the defaults, so settings added in later versions
+    /// don't reset everything else. A v1 config is migrated once.
     static func load() -> Config {
-        guard let data = UserDefaults.standard.data(forKey: key),
-              let config = try? JSONDecoder().decode(Config.self, from: data) else { return Config() }
+        let defaults = UserDefaults.standard
+        let current = defaults.data(forKey: key)
+        guard let data = current ?? defaults.data(forKey: legacyKey),
+              let stored = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let baseData = try? JSONEncoder().encode(Config()),
+              let base = (try? JSONSerialization.jsonObject(with: baseData)) as? [String: Any],
+              let merged = try? JSONSerialization.data(withJSONObject: base.merging(stored) { $1 }),
+              var config = try? JSONDecoder().decode(Config.self, from: merged)
+        else { return Config() }
+        if current == nil, let legacy = try? JSONDecoder().decode(LegacyConfig.self, from: data) {
+            config.migrate(legacy)
+        }
         return config
     }
 
@@ -151,4 +170,43 @@ struct Config: Codable, Equatable {
             UserDefaults.standard.set(data, forKey: Self.key)
         }
     }
+
+    /// v1 had Schedule, App Rules and Auto-stop beside the switch; they are triggers now.
+    private mutating func migrate(_ old: LegacyConfig) {
+        if old.scheduleEnabled == true {
+            var t = Trigger(kind: .schedule)
+            t.from = old.scheduleFrom ?? t.from
+            t.to = old.scheduleTo ?? t.to
+            t.days = old.scheduleDays ?? t.days
+            triggers.append(t)
+        }
+        if old.appRuleEnabled == true, old.appRule != "notInFront" {
+            for id in old.appBundleIDs ?? [] {
+                var t = Trigger(kind: .app)
+                t.bundleID = id
+                t.frontOnly = old.appRule == "inFront"
+                triggers.append(t)
+            }
+        }
+        if old.preventSleep == false { display = .canSleep }
+        if old.pauseWhenLocked == false { whenLocked = .keepGoing }
+        if old.deactivateEnabled == true, old.deactivateKind == "after", let after = old.deactivateAfter {
+            length = .minutes(Int(after / 60))
+        }
+    }
+}
+
+private struct LegacyConfig: Decodable {
+    var scheduleEnabled: Bool?
+    var scheduleFrom: ClockTime?
+    var scheduleTo: ClockTime?
+    var scheduleDays: Set<Int>?
+    var appRuleEnabled: Bool?
+    var appRule: String?
+    var appBundleIDs: [String]?
+    var preventSleep: Bool?
+    var pauseWhenLocked: Bool?
+    var deactivateEnabled: Bool?
+    var deactivateKind: String?
+    var deactivateAfter: TimeInterval?
 }

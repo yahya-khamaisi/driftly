@@ -8,20 +8,7 @@ struct SettingsPage: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Button(action: back) {
-                    Image(systemName: "chevron.left")
-                }
-                .buttonStyle(.borderless)
-                .imageScale(.large)
-                .help("Back")
-                .accessibilityLabel("Back")
-                .keyboardShortcut(.cancelAction)
-                Text("Settings").font(.headline)
-                Spacer()
-            }
-            .padding(.horizontal, Metrics.contentInset)
-            .padding(.top, 14)
+            PageHeader(title: "Settings", back: back)
 
             FittedForm(topEdge: 4) {
                 Section("Menu Bar") {
@@ -30,34 +17,66 @@ struct SettingsPage: View {
                             Label(icon.title, systemImage: icon.active).tag(icon)
                         }
                     }
-                    Toggle("Dim icon when inactive", isOn: $state.config.dimWhenIdle)
+                    Toggle("Show time left", isOn: $state.config.showTimeLeft)
+                    Toggle("Dim icon when off", isOn: $state.config.dimWhenIdle)
                 }
 
                 Section("General") {
-                    LabeledContent("Toggle shortcut") {
+                    LabeledContent("Shortcut") {
                         ShortcutRecorder(shortcut: $state.config.shortcut)
                     }
                     Toggle(isOn: $state.config.launchAtLogin) {
                         Text("Open at login")
-                        Text("Resumes if Driftly was on when you quit.")
+                        Text("Resumes a session that was on when you quit.")
                     }
+                    Toggle("Notify when a session ends", isOn: $state.config.notifyOnEnd)
                 }
 
                 Section("Power") {
-                    Toggle("Pause when screen locks", isOn: $state.config.pauseWhenLocked)
-                    Toggle(isOn: $state.config.preventSleep) {
-                        Text("Keep Mac awake while active")
-                        Text("Closing the lid still puts it to sleep.")
+                    Picker("When the screen is locked", selection: $state.config.whenLocked) {
+                        Text("Pause").tag(LockBehavior.pause)
+                        Text("Keep going").tag(LockBehavior.keepGoing)
                     }
-                    Picker("Stop when battery is below", selection: $state.config.batteryCutoff) {
+                    .help("Pause lets the display sleep and stops simulated activity; the Mac stays awake.")
+                    Picker("Lock screen when idle for", selection: $state.config.lockAfterIdle) {
+                        Text("Never").tag(TimeInterval(0))
+                        Divider()
+                        ForEach([60, 120, 300, 600, 900, 1800], id: \.self) { Text(Summary.duration($0)).tag(TimeInterval($0)) }
+                    }
+                    .help("During a session, locks the screen after this long without real input.")
+                    Picker("End session below", selection: $state.config.batteryCutoff) {
                         Text("Never").tag(0)
                         Divider()
-                        ForEach([5, 10, 15, 20, 30, 50], id: \.self) { Text("\($0)%").tag($0) }
+                        ForEach([5, 10, 15, 20, 30, 50], id: \.self) { Text("\($0)% battery").tag($0) }
                     }
+                    LabeledContent("Keep drive awake") {
+                        Menu(state.config.keepDriveName ?? "None") {
+                            Button("None") {
+                                state.config.keepDriveName = nil
+                                state.config.keepDriveBookmark = nil
+                            }
+                            Divider()
+                            Button("Choose Drive…") {
+                                if let drive = DriveKeeper.choose() {
+                                    state.config.keepDriveName = drive.name
+                                    state.config.keepDriveBookmark = drive.bookmark
+                                }
+                            }
+                        }
+                        .fixedSize()
+                    }
+                    .help("Writes a tiny hidden file to the drive once a minute during a session.")
+                }
+
+                Section("Statistics") {
+                    LabeledContent("Awake today") {
+                        Text("\(Summary.total(state.statsSnapshot.today)) · this week \(Summary.total(state.statsSnapshot.week))")
+                    }
+                    .contextMenu { Button("Reset Statistics", role: .destructive) { state.resetStats() } }
                 }
 
                 Section {
-                    PermissionRow(title: "Accessibility", detail: "Moves, clicks and scrolls.",
+                    PermissionRow(title: "Accessibility", detail: "Simulates activity and locks the screen.",
                                   granted: state.canPost, pane: .accessibility)
                     PermissionRow(title: "Input Monitoring", detail: "Notices when you're typing.",
                                   granted: state.canListen, pane: .inputMonitoring)

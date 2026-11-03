@@ -45,7 +45,7 @@ struct OnboardingPage: View {
                     .accessibilityHidden(true)
                 Text("Welcome to Driftly")
                     .font(.title3.weight(.semibold))
-                Text("Keeps your Mac awake and your status active by gently moving the cursor while you're away.")
+                Text("Keeps your Mac awake for as long as you need, and can keep your status active by gently moving the cursor.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -56,7 +56,7 @@ struct OnboardingPage: View {
 
             FittedForm(topEdge: 6) {
                 Section {
-                    PermissionRow(title: "Accessibility", detail: "Required to move the cursor.",
+                    PermissionRow(title: "Accessibility", detail: "Needed to simulate activity.",
                                   granted: state.canPost, pane: .accessibility)
                     PermissionRow(title: "Input Monitoring", detail: "Optional. Pauses while you type.",
                                   granted: state.canListen, pane: .inputMonitoring)

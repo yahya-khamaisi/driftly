@@ -1,11 +1,24 @@
 import AppKit
 import SwiftUI
 
-enum PanelPage { case onboarding, main, settings }
+enum PanelPage: Hashable {
+    case onboarding, main, settings, triggers
+    case editTrigger(UUID?)   // nil adds a new one
 
-/// The whole app UI: one menu-bar panel. Settings slides in over the main page.
+    /// How deep the page sits, so slides go the right way.
+    var depth: Int {
+        switch self {
+        case .onboarding, .main: 0
+        case .settings, .triggers: 1
+        case .editTrigger: 2
+        }
+    }
+}
+
+/// The whole app UI: one menu-bar panel. Settings and Triggers slide in over the main page.
 struct PanelView: View {
     @State var page: PanelPage
+    @State private var forward = true
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     init(initialPage: PanelPage? = nil) {
@@ -14,27 +27,39 @@ struct PanelView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            switch page {
-            case .onboarding:
-                OnboardingPage(done: {
-                    Onboarding.finish()
-                    go(.main)
-                })
-                .transition(.opacity)
-            case .main:
-                MainPage(openSettings: { go(.settings) })
-                    .transition(reduceMotion ? .opacity : .move(edge: .leading).combined(with: .opacity))
-            case .settings:
-                SettingsPage(back: { go(.main) })
-                    .transition(reduceMotion ? .opacity : .move(edge: .trailing).combined(with: .opacity))
+            Group {
+                switch page {
+                case .onboarding:
+                    OnboardingPage(done: {
+                        Onboarding.finish()
+                        go(.main)
+                    })
+                case .main:
+                    MainPage(openSettings: { go(.settings) }, openTriggers: { go(.triggers) })
+                case .settings:
+                    SettingsPage(back: { go(.main) })
+                case .triggers:
+                    TriggersPage(back: { go(.main) }, edit: { go(.editTrigger($0)) })
+                case .editTrigger(let id):
+                    TriggerEditor(id: id, done: { go(.triggers) })
+                }
             }
+            .id(page)
+            .transition(transition)
         }
         .frame(width: Metrics.width)
         .clipped()
         .focusEffectDisabled()   // no focus ring on the first control when the panel opens
     }
 
+    private var transition: AnyTransition {
+        if reduceMotion { return .opacity }
+        return .asymmetric(insertion: .move(edge: forward ? .trailing : .leading),
+                           removal: .move(edge: forward ? .leading : .trailing)).combined(with: .opacity)
+    }
+
     private func go(_ next: PanelPage) {
+        forward = next.depth >= page.depth
         withAnimation(reduceMotion ? .easeInOut(duration: 0.15) : .snappy(duration: 0.28)) { page = next }
     }
 }
@@ -44,72 +69,85 @@ struct PanelView: View {
 struct MainPage: View {
     @EnvironmentObject var state: AppState
     let openSettings: () -> Void
+    let openTriggers: () -> Void
 
-    @AppStorage("open.movement") private var movementOpen = true
+    @AppStorage("open.movement") private var movementOpen = false
     @AppStorage("open.activity") private var activityOpen = false
-    @AppStorage("open.schedule") private var scheduleOpen = false
-    @AppStorage("open.apps") private var appsOpen = false
 
     var body: some View {
         VStack(spacing: 0) {
             FittedForm {
                 Section {
                     StatusRow()
-                    VStack(alignment: .leading, spacing: 6) {
-                        Picker("Mode", selection: $state.config.mode) {
-                            Text("Standard").tag(MoveMode.standard)
-                            Text("Natural").tag(MoveMode.natural)
-                            Text("Silent").tag(MoveMode.silent)
-                        }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        Text(Summary.modeHint(state.config.mode))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                }
+
+                Section {
+                    SessionRows()
+                }
+
+                Section {
+                    Toggle(isOn: $state.config.simulateActivity) {
+                        SectionLabel(symbol: "cursorarrow.motionlines", tint: .blue, title: "Simulate activity",
+                                     summary: activitySummary)
                     }
-                    if !state.canPost {
+                    if state.config.simulateActivity {
+                        if !state.canPost {
+                            LabeledContent {
+                                Button("Allow…") {
+                                    InputPoster.requestAccess()
+                                    Permissions.open(.accessibility)
+                                }
+                            } label: {
+                                Label {
+                                    Text("Accessibility access needed")
+                                } icon: {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .symbolRenderingMode(.multicolor)
+                                }
+                            }
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            Picker("Mode", selection: $state.config.mode) {
+                                Text("Standard").tag(MoveMode.standard)
+                                Text("Natural").tag(MoveMode.natural)
+                                Text("Silent").tag(MoveMode.silent)
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            Text(Summary.modeHint(state.config.mode))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        DisclosureGroup(isExpanded: $movementOpen) { MovementRows() } label: {
+                            DisclosureSummary(title: "Movement", value: Summary.movement(state.config))
+                        }
+                        DisclosureGroup(isExpanded: $activityOpen) { ActivityRows() } label: {
+                            DisclosureSummary(title: "Extra activity", value: Summary.activity(state.config))
+                        }
+                    }
+                }
+
+                Section {
+                    Button(action: openTriggers) {
                         LabeledContent {
-                            Button("Allow…") {
-                                InputPoster.requestAccess()
-                                Permissions.open(.accessibility)
+                            HStack(spacing: 6) {
+                                Text(Summary.triggers(state.config))
+                                Image(systemName: "chevron.right").imageScale(.small)
                             }
+                            .foregroundStyle(.secondary)
                         } label: {
-                            Label {
-                                Text("Accessibility access needed")
-                            } icon: {
-                                Image(systemName: "exclamationmark.triangle.fill")
-                                    .symbolRenderingMode(.multicolor)
-                            }
+                            Label { Text("Triggers") } icon: { IconTile(symbol: "bolt.fill", tint: .green) }
                         }
+                        .contentShape(Rectangle())
                     }
-                }
-
-                Section {
-                    DisclosureGroup(isExpanded: $movementOpen) { MovementRows() } label: {
-                        SectionLabel(symbol: "cursorarrow.motionlines", tint: .blue,
-                                     title: "Movement", summary: Summary.movement(state.config))
-                    }
-                    DisclosureGroup(isExpanded: $activityOpen) { ActivityRows() } label: {
-                        SectionLabel(symbol: "cursorarrow.click.2", tint: .purple,
-                                     title: "Extra Activity", summary: Summary.activity(state.config))
-                    }
-                }
-
-                Section {
-                    DisclosureGroup(isExpanded: $scheduleOpen) { ScheduleRows() } label: {
-                        SectionLabel(symbol: "calendar.badge.clock", tint: .green,
-                                     title: "Schedule", summary: Summary.schedule(state.config))
-                    }
-                    DisclosureGroup(isExpanded: $appsOpen) { AppRuleRows() } label: {
-                        SectionLabel(symbol: "app.badge.checkmark", tint: .orange,
-                                     title: "App Rules", summary: Summary.apps(state.config))
-                    }
+                    .buttonStyle(.plain)
+                    .accessibilityHint("Start sessions automatically")
                 }
             }
 
             Divider()
             HStack(spacing: 12) {
-                Text("\(state.config.shortcut.display) toggles Driftly")
+                Text("\(state.config.shortcut.display) starts or ends a session")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
@@ -125,9 +163,30 @@ struct MainPage: View {
             .padding(.vertical, 6)
         }
     }
+
+    /// Live state while a session runs, otherwise what the feature is for.
+    private var activitySummary: String {
+        // Missing permission has its own row below, so it isn't repeated here.
+        guard state.config.simulateActivity, state.canPost else { return "Keeps chat apps showing you as active" }
+        return state.isActive && !state.activityStatus.isEmpty ? state.activityStatus : "Starts with each session"
+    }
 }
 
-/// Top row in the Wi‑Fi / Bluetooth style: status gauge, name, state, master switch.
+/// Disclosure row label: title, then a one-line secondary value at the trailing edge.
+struct DisclosureSummary: View {
+    let title: String
+    let value: String
+    var body: some View {
+        HStack {
+            Text(title).layoutPriority(1)
+            Spacer(minLength: 8)
+            Text(value).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// Top row in the Wi‑Fi / Bluetooth style: session gauge, state, master switch.
 struct StatusRow: View {
     @EnvironmentObject var state: AppState
 
@@ -145,23 +204,63 @@ struct StatusRow: View {
             .scaleEffect(0.62)
             .frame(width: 36, height: 36)
             .animation(.linear(duration: 0.25), value: state.ringProgress)
-            .accessibilityLabel(state.isActive ? "Time until next move" : "Driftly is off")
+            .accessibilityLabel(state.isActive ? "Session time left" : "No session")
             .accessibilityValue(Text("\(Int(state.ringProgress * 100)) percent"))
 
             VStack(alignment: .leading, spacing: 1) {
-                Text("Driftly").font(.headline)
+                Text(state.isActive ? "Awake" : "Driftly").font(.headline)
                 Text(state.status)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                    .monospacedDigit()
                     .contentTransition(.numericText())
             }
             Spacer()
-            Toggle("Driftly", isOn: Binding(get: { state.isActive }, set: { _ in state.toggle() }))
+            Toggle("Keep awake", isOn: Binding(get: { state.isActive }, set: { _ in state.toggle() }))
                 .toggleStyle(.switch)
                 .labelsHidden()
         }
     }
+}
+
+/// How long a session lasts and what happens to the display.
+struct SessionRows: View {
+    @EnvironmentObject var state: AppState
+
+    var body: some View {
+        Picker(selection: $state.config.length) {
+            Text("Indefinitely").tag(SessionLength.indefinitely)
+            Divider()
+            ForEach(SessionLength.presets, id: \.self) { Text(Summary.length($0)).tag($0) }
+            Divider()
+            Text("Until a time").tag(SessionLength.untilTime)
+        } label: {
+            Label { Text("Keep awake") } icon: { IconTile(symbol: "clock.fill", tint: .orange) }
+        }
+        .help(state.isActive ? "Changing this restarts the countdown from now." : "Applies when you start a session.")
+        if state.config.length == .untilTime {
+            DatePicker("Until", selection: clockBinding($state.config.untilTime), displayedComponents: .hourAndMinute)
+        }
+        Picker(selection: $state.config.display) {
+            Text("Stays on").tag(DisplayMode.stayOn)
+            Text("Can sleep").tag(DisplayMode.canSleep)
+        } label: {
+            Label { Text("Display") } icon: { IconTile(symbol: "display", tint: .indigo) }
+        }
+        .help("With Can sleep, the screen turns off as usual but the Mac stays awake.")
+    }
+}
+
+/// Binds a DatePicker (hour and minute) to a ClockTime.
+func clockBinding(_ time: Binding<ClockTime>) -> Binding<Date> {
+    Binding(
+        get: { Calendar.current.date(bySettingHour: time.wrappedValue.hour, minute: time.wrappedValue.minute,
+                                     second: 0, of: Date()) ?? Date() },
+        set: {
+            let c = Calendar.current.dateComponents([.hour, .minute], from: $0)
+            time.wrappedValue = ClockTime(hour: c.hour ?? 0, minute: c.minute ?? 0)
+        })
 }
 
 // MARK: - Section rows (all stock controls)
@@ -224,124 +323,5 @@ struct ActivityRows: View {
         .help(state.config.mode == .silent ? "Silent mode never scrolls." : "Scrolls a little and back after each move.")
         Toggle("Key press", isOn: $state.config.keyPress)
             .help("A bare Control tap with each move. Types nothing.")
-    }
-}
-
-struct ScheduleRows: View {
-    @EnvironmentObject var state: AppState
-    private let weekdays = [2, 3, 4, 5, 6, 7, 1]   // Mon…Sun
-
-    var body: some View {
-        Toggle("Active hours", isOn: $state.config.scheduleEnabled)
-        if state.config.scheduleEnabled {
-            DatePicker("From", selection: timeBinding(\.scheduleFrom), displayedComponents: .hourAndMinute)
-            DatePicker("To", selection: timeBinding(\.scheduleTo), displayedComponents: .hourAndMinute)
-            LabeledContent("Days") {
-                Menu(Summary.days(state.config.scheduleDays)) {
-                    ForEach(weekdays, id: \.self) { day in
-                        Toggle(Calendar.current.weekdaySymbols[day - 1], isOn: dayBinding(day))
-                    }
-                    Divider()
-                    Button("Weekdays") { state.config.scheduleDays = [2, 3, 4, 5, 6] }
-                    Button("Every Day") { state.config.scheduleDays = Set(1...7) }
-                }
-                .fixedSize()
-            }
-        }
-        Toggle("Auto-stop", isOn: $state.config.deactivateEnabled)
-        if state.config.deactivateEnabled {
-            Picker("Stop", selection: $state.config.deactivateKind) {
-                Text("At Time").tag(DeactivateKind.at)
-                Text("After").tag(DeactivateKind.after)
-            }
-            .pickerStyle(.segmented)
-            if state.config.deactivateKind == .at {
-                DatePicker("Time", selection: timeBinding(\.deactivateAt), displayedComponents: .hourAndMinute)
-            } else {
-                Picker("Duration", selection: $state.config.deactivateAfter) {
-                    ForEach([900, 1800, 3600, 7200, 10800, 14400, 21600, 28800, 43200], id: \.self) {
-                        Text(Summary.duration($0)).tag(TimeInterval($0))
-                    }
-                }
-            }
-        }
-    }
-
-    private func timeBinding(_ kp: WritableKeyPath<Config, ClockTime>) -> Binding<Date> {
-        Binding(
-            get: {
-                let t = state.config[keyPath: kp]
-                return Calendar.current.date(bySettingHour: t.hour, minute: t.minute, second: 0, of: Date()) ?? Date()
-            },
-            set: {
-                let c = Calendar.current.dateComponents([.hour, .minute], from: $0)
-                state.config[keyPath: kp] = ClockTime(hour: c.hour ?? 0, minute: c.minute ?? 0)
-            })
-    }
-
-    private func dayBinding(_ day: Int) -> Binding<Bool> {
-        Binding(get: { state.config.scheduleDays.contains(day) },
-                set: { on in
-                    if on { state.config.scheduleDays.insert(day) } else { state.config.scheduleDays.remove(day) }
-                })
-    }
-}
-
-struct AppRuleRows: View {
-    @EnvironmentObject var state: AppState
-    var body: some View {
-        Toggle("Only while app", isOn: $state.config.appRuleEnabled)
-        if state.config.appRuleEnabled {
-            Picker("When", selection: $state.config.appRule) {
-                Text("Is running").tag(AppRule.isRunning)
-                Text("Is in front").tag(AppRule.inFront)
-                Text("Isn't in front").tag(AppRule.notInFront)
-            }
-            if state.config.appBundleIDs.isEmpty {
-                Text("Add the apps Driftly should watch.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(state.config.appBundleIDs, id: \.self) { id in
-                LabeledContent {
-                    Button { state.config.appBundleIDs.removeAll { $0 == id } } label: {
-                        Image(systemName: "minus.circle")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Remove \(Summary.appName(id))")
-                    .accessibilityLabel("Remove \(Summary.appName(id))")
-                } label: {
-                    Label { Text(Summary.appName(id)) } icon: { AppIcon(bundleID: id) }
-                }
-            }
-            LabeledContent("Apps") {
-                Menu("Add App") {
-                    ForEach(runningApps, id: \.bundleIdentifier) { app in
-                        Button(app.localizedName ?? "?") { add(app.bundleIdentifier) }
-                    }
-                    Divider()
-                    Button("Choose…") { chooseApp() }
-                }
-                .fixedSize()
-            }
-        }
-    }
-
-    private var runningApps: [NSRunningApplication] {
-        NSWorkspace.shared.runningApplications
-            .filter { $0.activationPolicy == .regular && $0.bundleIdentifier != Bundle.main.bundleIdentifier }
-            .sorted { ($0.localizedName ?? "") < ($1.localizedName ?? "") }
-    }
-
-    private func add(_ id: String?) {
-        if let id, !state.config.appBundleIDs.contains(id) { state.config.appBundleIDs.append(id) }
-    }
-
-    private func chooseApp() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.application]
-        panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        NSApp.activate(ignoringOtherApps: true)
-        if panel.runModal() == .OK, let url = panel.url { add(Bundle(url: url)?.bundleIdentifier) }
     }
 }

@@ -86,6 +86,28 @@ struct FitToContent: ViewModifier {
     }
 }
 
+/// Back button and title for pages that slide in over the main page. Esc goes back.
+struct PageHeader: View {
+    let title: String
+    let back: () -> Void
+    var body: some View {
+        HStack(spacing: 6) {
+            Button(action: back) {
+                Image(systemName: "chevron.left")
+            }
+            .buttonStyle(.borderless)
+            .imageScale(.large)
+            .help("Back")
+            .accessibilityLabel("Back")
+            .keyboardShortcut(.cancelAction)
+            Text(title).font(.headline)
+            Spacer()
+        }
+        .padding(.horizontal, Metrics.contentInset)
+        .padding(.top, 14)
+    }
+}
+
 /// Borderless icon button with a full 28pt hit target and a spoken label (HIG minimums).
 struct FooterButton: View {
     let symbol: String

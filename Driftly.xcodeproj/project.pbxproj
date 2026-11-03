@@ -171,11 +171,14 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Driftly;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Driftly checks which Bluetooth devices are connected, for device triggers.";
+				INFOPLIST_KEY_NSLocationUsageDescription = "Driftly reads the Wi-Fi network name, for network triggers. Your location isn't used.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Driftly reads the Wi-Fi network name, for network triggers. Your location isn't used.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.yahyakhamaisi.driftly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -196,11 +199,14 @@
 				INFOPLIST_KEY_CFBundleDisplayName = Driftly;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.utilities";
 				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription = "Driftly checks which Bluetooth devices are connected, for device triggers.";
+				INFOPLIST_KEY_NSLocationUsageDescription = "Driftly reads the Wi-Fi network name, for network triggers. Your location isn't used.";
+				INFOPLIST_KEY_NSLocationWhenInUseUsageDescription = "Driftly reads the Wi-Fi network name, for network triggers. Your location isn't used.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MARKETING_VERSION = 2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.yahyakhamaisi.driftly;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;

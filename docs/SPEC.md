@@ -6,53 +6,61 @@ How each feature behaves, and which macOS API implements it. Every feature is fr
 
 | Area | Behaviour |
 |---|---|
-| **Master toggle** | Switch in the panel, plus a global hotkey (default ⌃⌘D, recordable). The status line shows Off / Waiting for idle · Ns / Active · next move in Ns / Paused · reason / "Activates: Mon ≈09:03". |
-| **Modes** | **Standard:** straight eased moves at exact intervals. **Natural:** curved Bézier paths, varied speed, sub-pixel jitter, varied click timing, ±8% on both intervals, and Schedule and Auto-stop times shifted ±1–5 min per day (shown with ≈). **Silent:** a zero-distance move plus `IOPMAssertionDeclareUserActivity`; no clicks and no scroll. Key press still works. |
-| **Start after idle** | Seconds of *real* inactivity (5s–10min) before the first move. |
-| **Move every** | Interval after the first move (5s–5min), or continuously. |
-| **Range** | Small: a few px, then returns to where you left it. Medium: wanders nearby. Full: anywhere on the current display. |
-| **Click** | None / Left / Right / Alternate, at each saved point in turn (or at the cursor if none are saved). The cursor then moves to a random spot. |
-| **Scroll** | Vertical / Horizontal / Both: a few ticks one way, then the same number back. |
-| **Key press** | A bare Control tap (`flagsChanged`) with each cycle. Types nothing. |
-| **Schedule** | Active hours on chosen weekdays (overnight windows supported). A manual toggle holds until the next scheduled start or stop. |
-| **Auto-stop** | *At time*: repeats daily, only switches off, never on. *After*: countdown restarts on every activation; always exact. |
-| **App rules** | Is running / Is in front / Isn't in front, for a list of apps. Only gates jiggling; Driftly still has to be switched on. |
-| **Automatic pauses** | Real input (mouse, keys, scroll, gestures), screen lock (optional), fast user switching, sleep, screensaver, another app's open menu, screenshot UI (⌘⇧4/5), battery below a threshold. |
-| **Power** | Optional display-sleep assertion while active. It's released while the screen is locked. |
-| **Open at login** | Opens Driftly at login, and resumes only if it was active when you quit. |
+| **Session** | The main switch (or the hotkey, default ⌃⌘D) starts a session. A manual session lasts indefinitely, for a preset length (15 min–8 h) or until a time; choosing a new length during a session restarts the countdown. The display either stays on or can sleep; the Mac itself always stays awake. |
+| **Status** | Header: "Awake" with time left and end time, "Until you turn it off", "While Zoom is running", or "Off · starts today at 09:00". The ring shows the share of a timed session still to go. The menu bar can show time left (H:MM). |
+| **Simulate activity** | Optional within any session. Modes: **Standard** (straight eased moves at exact intervals), **Natural** (Bézier paths, varied speed, ±8% on both intervals, schedule times shifted ±1–5 min per day, shown with ≈), **Silent** (a zero-distance move plus `IOPMAssertionDeclareUserActivity`; no clicks or scroll). Start after idle 5s–10min; move every 5s–5min or continuously; range small/medium/full. Extra activity: clicks at saved points, a scroll that returns, a bare Control tap. |
+| **Triggers** | Each one only decides *when* a session starts: schedule, app (running / in front), power (charger / on battery / battery above N%), display (external / mirroring), device (USB or Bluetooth), network (Wi-Fi name / VPN), audio output, drive mounted, download in Downloads (30 s grace after the last partial file), CPU above N%. A triggered session uses the main panel's settings, hands over to another trigger that's still true, and ends when none matches. |
+| **Manual override** | Ending any session by hand holds off every trigger that's currently true until it stops matching. Starting by hand while a trigger matches makes the session manual. |
+| **Automatic pauses** | Simulated activity pauses for real input, user switching, sleep, the screensaver, another app's open menu and the screenshot UI. With "When the screen is locked: Pause", activity stops and the display may sleep while locked. |
+| **Ends on its own** | Timer or until-time reached, battery below the cutoff (on battery), or no trigger matching. A notification says why, if enabled. |
+| **Lock after idle** | During a session, locks the screen after N minutes without real input. |
+| **Drive keep-alive** | During a session, writes a small hidden file to the chosen drive every 60 s. |
+| **Statistics** | Seconds awake and sessions per day, kept for 60 days. Settings shows today and this week. |
+| **Open at login** | Opens Driftly at login, and resumes a manual session that was on when you quit. |
+| **Migration** | v1 settings migrate once: Schedule and App rules become triggers, Auto-stop "after" becomes the session length, Keep awake and Pause when locked map to the new pickers. |
 
 ## 2. macOS APIs
 
 | Need | API | Notes |
 |---|---|---|
-| Move / click / scroll / key | `CGEvent(...).post(tap: .cghidEventTap)` | Posting at the HID tap resets the system idle timer, which Teams, Slack and screensavers read. `CGWarpMouseCursorPosition` does not. |
-| Permissions | `CGPreflightPostEventAccess` / `CGRequestPostEventAccess`, `CGPreflightListenEventAccess` / `CGRequestListenEventAccess` | Both work inside the App Sandbox. |
+| Keep awake | `IOPMAssertionCreateWithName`: `PreventUserIdleSystemSleep`, plus `PreventUserIdleDisplaySleep` when the display stays on | Released when the session ends. |
+| Move / click / scroll / key / lock | `CGEvent(...).post(tap: .cghidEventTap)` | Posting at the HID tap resets the system idle timer. Lock is ⌃⌘Q. |
+| Permissions | `CGPreflight/RequestPostEventAccess`, `CGPreflight/RequestListenEventAccess` | Work inside the App Sandbox. |
 | Ignore own events | `.eventSourceUserData` marker, filtered in a global `NSEvent` monitor | |
-| Silent keep-alive | Zero-delta `mouseMoved` + `IOPMAssertionDeclareUserActivity` | |
-| Keep awake | `IOPMAssertionCreateWithName(kIOPMAssertionTypePreventUserIdleDisplaySleep)` | |
-| Lock / screensaver | `DistributedNotificationCenter`: `com.apple.screenIsLocked/Unlocked`, `com.apple.screensaver.didstart/didstop` | |
-| User switch / sleep | `NSWorkspace` `sessionDidResignActive/BecomeActive`, `willSleep/didWake` | |
-| Menu / screenshot open | `CGWindowListCopyWindowInfo`: another app's window at `popUpMenuWindow` level, or owner `screencaptureui` | Layer and owner name need no Screen Recording permission. |
-| App rules | `NSWorkspace.runningApplications`, `frontmostApplication` | |
-| Battery | `IOPSCopyPowerSourcesInfo` | |
-| Hotkey | Carbon `RegisterEventHotKey` | Works in the sandbox. |
+| Lock / screensaver / switch / sleep | `DistributedNotificationCenter`, `NSWorkspace` notifications | |
+| Menu / screenshot open | `CGWindowListCopyWindowInfo` layer and owner name | No Screen Recording permission needed. |
+| App trigger | `NSWorkspace.runningApplications`, `frontmostApplication` | |
+| Power trigger, battery cutoff | `IOPSCopyPowerSourcesInfo`, `IOPSGetProvidingPowerSourceType` | |
+| Display trigger | `CGGetOnlineDisplayList`, `CGDisplayIsBuiltin`, `CGDisplayIsInMirrorSet` | |
+| Device trigger | IORegistry `IOUSBHostDevice` "USB Product Name"; `IOBluetoothDevice.pairedDevices` | Entitlements `device.usb`, `device.bluetooth`. |
+| Network trigger | `CWWiFiClient` SSID (needs Location); `getifaddrs` utun/ppp/ipsec with IPv4 for VPN | Entitlement `personal-information.location`. |
+| Audio trigger | CoreAudio default output device name | |
+| Drive trigger | `FileManager.mountedVolumeURLs` | |
+| Download trigger | Partial-file extensions (`.download`, `.crdownload`, `.part`, `.partial`, `.opdownload`) in Downloads | Entitlement `files.downloads.read-only`. |
+| CPU trigger | `host_statistics(HOST_CPU_LOAD_INFO)` between samples | |
+| Drive keep-alive | Security-scoped bookmark from an open panel | Entitlements `files.user-selected.read-write`, `files.bookmarks.app-scope`. |
+| Notifications | `UNUserNotificationCenter` | |
+| Hotkey | Carbon `RegisterEventHotKey` | |
 | Login item | `SMAppService.mainApp` | |
 | UI | `MenuBarExtra(.window)`, grouped `Form`, `LSUIElement = YES` | |
 
-## 3. Engine loop (`AppState.tick`, once per second)
+## 3. Engine loop (`AppState.tick`, 4 Hz)
 
 ```
-schedule boundary crossed?            → setActive(inWindow)   (manual choice holds until the next boundary)
-auto-stop deadline / battery cutoff   → setActive(false)
-!active                               → "Off" / "Activates: …"
-blocker (permission, lock, switch, sleep, menu, app rule) → "Paused · …"
-real idle < threshold                 → "Waiting for idle · Ns"
-first move since activity, or interval elapsed → Mover.cycle()
+every 2 s: evaluate triggers  → start (.trigger) / hand over / end
+timer or until-time reached   → end
+on battery below cutoff       → end
+power assertions              → system while active; display unless "can sleep" or paused while locked
+!active                       → "Off" / "Off · starts …"
+lock after idle, drive keep-alive, statistics
+simulate activity on?  blocker → "Paused · …"
+                       idle < threshold → "Waiting for idle · Ns"
+                       first move since activity, or interval elapsed → Mover.cycle()
 ```
 
 Any real input during a cycle aborts it immediately.
 
-## 4. Known follow-ups
+## 4. Not included
 
-- Verify the menu-detection heuristic doesn't cause permanent pauses with third-party menu-bar apps.
-- Localization.
+- Staying awake with the lid closed: it needs an admin helper that changes system power settings, which doesn't fit a sandboxed app.
+- AppleScript: Shortcuts actions are the better modern route and a possible follow-up.

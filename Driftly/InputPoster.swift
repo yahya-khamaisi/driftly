@@ -48,6 +48,16 @@ enum InputPoster {
         }
     }
 
+    /// ⌃⌘Q, the system Lock Screen shortcut.
+    static func lockScreen() {
+        let q: CGKeyCode = 0x0C
+        for down in [true, false] {
+            let e = CGEvent(keyboardEventSource: source, virtualKey: q, keyDown: down)
+            e?.flags = [.maskCommand, .maskControl]
+            post(e)
+        }
+    }
+
     /// Bounds of the display under `p`, in global CG coordinates.
     static func displayBounds(containing p: CGPoint) -> CGRect {
         var id: CGDirectDisplayID = 0

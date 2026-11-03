@@ -1,14 +1,21 @@
 import Foundation
 
-/// Time rules for Schedule and Deactivate. In Natural Mode each time shifts by a random
-/// 1–5 minutes per day; the shift is seeded by the date so it is stable within a day.
+/// Time rules for schedule triggers and "until" sessions. In Natural mode each time shifts by
+/// a random 1–5 minutes per day; the shift is seeded by the date so it is stable within a day.
 struct Schedule {
-    let config: Config
+    let from: ClockTime
+    let to: ClockTime
+    let days: Set<Int>
     let natural: Bool
     var calendar = Calendar.current
 
     /// Effective minute-of-day for `time` on the day of `date`, with natural jitter applied.
     func effectiveMinutes(_ time: ClockTime, on date: Date, salt: Int) -> Int {
+        Self.effectiveMinutes(time, on: date, salt: salt, natural: natural, calendar: calendar)
+    }
+
+    static func effectiveMinutes(_ time: ClockTime, on date: Date, salt: Int, natural: Bool,
+                                 calendar: Calendar = .current) -> Int {
         guard natural else { return time.minutes }
         let day = calendar.ordinality(of: .day, in: .era, for: date) ?? 0
         var rng = SeededRandom(seed: UInt64(day) &* 31 &+ UInt64(salt))
@@ -19,31 +26,37 @@ struct Schedule {
     func isInWindow(_ now: Date) -> Bool {
         let weekday = calendar.component(.weekday, from: now)
         let m = calendar.component(.hour, from: now) * 60 + calendar.component(.minute, from: now)
-        let from = effectiveMinutes(config.scheduleFrom, on: now, salt: 1)
-        let to = effectiveMinutes(config.scheduleTo, on: now, salt: 2)
-        if from <= to {
-            return config.scheduleDays.contains(weekday) && m >= from && m < to
+        let start = effectiveMinutes(from, on: now, salt: 1)
+        let end = effectiveMinutes(to, on: now, salt: 2)
+        if start <= end {
+            return days.contains(weekday) && m >= start && m < end
         }
         // Overnight window (e.g. 22:00–06:00): the evening part belongs to today's weekday,
         // the morning part to yesterday's.
         let yesterday = weekday == 1 ? 7 : weekday - 1
-        return (m >= from && config.scheduleDays.contains(weekday))
-            || (m < to && config.scheduleDays.contains(yesterday))
+        return (m >= start && days.contains(weekday)) || (m < end && days.contains(yesterday))
     }
 
-    /// Next moment the "Deactivate At" time occurs after `now`.
-    func nextDeactivation(after now: Date) -> Date {
+    /// Next start of this window after `now`, within the coming week.
+    func nextStart(after now: Date) -> Date? {
+        for offset in 0..<8 {
+            guard let day = calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: now)),
+                  days.contains(calendar.component(.weekday, from: day)) else { continue }
+            let start = day.addingTimeInterval(TimeInterval(effectiveMinutes(from, on: day, salt: 1) * 60))
+            if start > now { return start }
+        }
+        return nil
+    }
+
+    /// Next time `time` occurs after `now` (today or tomorrow).
+    static func next(_ time: ClockTime, after now: Date, natural: Bool, calendar: Calendar = .current) -> Date {
         for offset in 0...1 {
             let day = calendar.date(byAdding: .day, value: offset, to: calendar.startOfDay(for: now))!
-            let minutes = effectiveMinutes(config.deactivateAt, on: day, salt: 3)
+            let minutes = effectiveMinutes(time, on: day, salt: 3, natural: natural, calendar: calendar)
             let candidate = day.addingTimeInterval(TimeInterval(minutes * 60))
             if candidate > now { return candidate }
         }
         return now.addingTimeInterval(24 * 3600)
-    }
-
-    static func format(minutes: Int, approximate: Bool) -> String {
-        String(format: "%@%02d:%02d", approximate ? "≈" : "", minutes / 60, minutes % 60)
     }
 }
 
