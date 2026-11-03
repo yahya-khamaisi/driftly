@@ -45,7 +45,7 @@ struct OnboardingPage: View {
                     .accessibilityHidden(true)
                 Text("Welcome to Driftly")
                     .font(.title3.weight(.semibold))
-                Text("Keeps your Mac awake for as long as you need, and can keep your status active by gently moving the cursor.")
+                Text("Awake keeps your Mac from sleeping. Drift keeps your status active by gently moving the cursor.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -56,7 +56,7 @@ struct OnboardingPage: View {
 
             FittedForm(topEdge: 6) {
                 Section {
-                    PermissionRow(title: "Accessibility", detail: "Needed to simulate activity.",
+                    PermissionRow(title: "Accessibility", detail: "Needed for Drift.",
                                   granted: state.canPost, pane: .accessibility)
                     PermissionRow(title: "Input Monitoring", detail: "Optional. Pauses while you type.",
                                   granted: state.canListen, pane: .inputMonitoring)
@@ -75,7 +75,7 @@ struct OnboardingPage: View {
                             .foregroundStyle(.secondary)
                     } label: {
                         Text("Lives in the menu bar")
-                        Text("Click its icon any time, or press \(state.config.shortcut.display).")
+                        Text("Click its icon, or press \(state.config.awake.shortcut.display) for Awake and \(state.config.drift.shortcut.display) for Drift.")
                     }
                 }
             }

@@ -2,20 +2,20 @@ import AppKit
 import SwiftUI
 
 enum PanelPage: Hashable {
-    case onboarding, main, settings, triggers
+    case onboarding, main, awake, drift, settings, triggers
     case editTrigger(UUID?)   // nil adds a new one
 
     /// How deep the page sits, so slides go the right way.
     var depth: Int {
         switch self {
         case .onboarding, .main: 0
-        case .settings, .triggers: 1
+        case .awake, .drift, .settings, .triggers: 1
         case .editTrigger: 2
         }
     }
 }
 
-/// The whole app UI: one menu-bar panel. Settings and Triggers slide in over the main page.
+/// The whole app UI: one menu-bar panel. Option pages, Triggers and Settings slide in over the main page.
 struct PanelView: View {
     @State var page: PanelPage
     @State private var forward = true
@@ -35,7 +35,11 @@ struct PanelView: View {
                         go(.main)
                     })
                 case .main:
-                    MainPage(openSettings: { go(.settings) }, openTriggers: { go(.triggers) })
+                    MainPage(open: go)
+                case .awake:
+                    AwakePage(back: { go(.main) })
+                case .drift:
+                    DriftPage(back: { go(.main) })
                 case .settings:
                     SettingsPage(back: { go(.main) })
                 case .triggers:
@@ -66,92 +70,75 @@ struct PanelView: View {
 
 // MARK: - Main page
 
+/// Two cards of the same shape, Awake and Drift, then Triggers.
 struct MainPage: View {
     @EnvironmentObject var state: AppState
-    let openSettings: () -> Void
-    let openTriggers: () -> Void
-
-    @AppStorage("open.movement") private var movementOpen = false
-    @AppStorage("open.activity") private var activityOpen = false
+    let open: (PanelPage) -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             FittedForm {
                 Section {
-                    StatusRow()
-                }
-
-                Section {
-                    SessionRows()
-                }
-
-                Section {
-                    Toggle(isOn: $state.config.simulateActivity) {
-                        SectionLabel(symbol: "cursorarrow.motionlines", tint: .blue, title: "Simulate activity",
-                                     summary: activitySummary)
+                    FeatureHeader(feature: .awake)
+                    LengthRows(feature: .awake, title: "Duration", icon: ("clock.fill", .orange))
+                    Picker(selection: $state.config.display) {
+                        Text("Stays on").tag(DisplayMode.stayOn)
+                        Text("Can sleep").tag(DisplayMode.canSleep)
+                    } label: {
+                        Label { Text("Display") } icon: { IconTile(symbol: "display", tint: .indigo) }
                     }
-                    if state.config.simulateActivity {
-                        if !state.canPost {
-                            LabeledContent {
-                                Button("Allow…") {
-                                    InputPoster.requestAccess()
-                                    Permissions.open(.accessibility)
-                                }
-                            } label: {
-                                Label {
-                                    Text("Accessibility access needed")
-                                } icon: {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .symbolRenderingMode(.multicolor)
-                                }
-                            }
-                        }
-                        VStack(alignment: .leading, spacing: 6) {
-                            Picker("Mode", selection: $state.config.mode) {
-                                Text("Standard").tag(MoveMode.standard)
-                                Text("Natural").tag(MoveMode.natural)
-                                Text("Silent").tag(MoveMode.silent)
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            Text(Summary.modeHint(state.config.mode))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        DisclosureGroup(isExpanded: $movementOpen) { MovementRows() } label: {
-                            DisclosureSummary(title: "Movement", value: Summary.movement(state.config))
-                        }
-                        DisclosureGroup(isExpanded: $activityOpen) { ActivityRows() } label: {
-                            DisclosureSummary(title: "Extra activity", value: Summary.activity(state.config))
-                        }
-                    }
+                    .help("With Can sleep, the screen turns off as usual but the Mac stays awake.")
+                    NavigationRow(title: "Awake options", symbol: "slider.horizontal.3", tint: .gray) { open(.awake) }
                 }
 
                 Section {
-                    Button(action: openTriggers) {
+                    FeatureHeader(feature: .drift)
+                    if !state.canPost {
                         LabeledContent {
-                            HStack(spacing: 6) {
-                                Text(Summary.triggers(state.config))
-                                Image(systemName: "chevron.right").imageScale(.small)
+                            Button("Allow…") {
+                                InputPoster.requestAccess()
+                                Permissions.open(.accessibility)
                             }
-                            .foregroundStyle(.secondary)
                         } label: {
-                            Label { Text("Triggers") } icon: { IconTile(symbol: "bolt.fill", tint: .green) }
+                            Label {
+                                Text("Accessibility access needed")
+                            } icon: {
+                                IconTile(symbol: "exclamationmark.triangle.fill", tint: .yellow)
+                            }
                         }
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityHint("Start sessions automatically")
+                    Picker(selection: $state.config.mode) {
+                        Text("Standard").tag(MoveMode.standard)
+                        Text("Natural").tag(MoveMode.natural)
+                        Text("Silent").tag(MoveMode.silent)
+                    } label: {
+                        Label { Text("Style") } icon: { IconTile(symbol: "wand.and.stars", tint: .teal) }
+                    }
+                    .help(Summary.modeHint(state.config.mode))
+                    LabeledContent {
+                        Text(Summary.movement(state.config))
+                    } label: {
+                        Label { Text("Movement") } icon: {
+                            IconTile(symbol: "point.topleft.down.to.point.bottomright.curvepath.fill", tint: .blue)
+                        }
+                    }
+                    NavigationRow(title: "Drift options", symbol: "slider.horizontal.3", tint: .gray) { open(.drift) }
+                }
+
+                Section {
+                    NavigationRow(title: "Triggers", symbol: "bolt.fill", tint: .pink,
+                                  value: Summary.triggers(state.config)) { open(.triggers) }
+                        .accessibilityHint("Turn Awake or Drift on automatically")
                 }
             }
 
             Divider()
             HStack(spacing: 12) {
-                Text("\(state.config.shortcut.display) starts or ends a session")
+                Text("\(state.config.awake.shortcut.display) Awake · \(state.config.drift.shortcut.display) Drift")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                FooterButton(symbol: "gearshape", label: "Settings", action: openSettings)
+                FooterButton(symbol: "gearshape", label: "Settings") { open(.settings) }
                     .keyboardShortcut(",", modifiers: .command)
                 FooterButton(symbol: "power", label: "Quit Driftly") { NSApp.terminate(nil) }
                     .keyboardShortcut("q", modifiers: .command)
@@ -163,53 +150,34 @@ struct MainPage: View {
             .padding(.vertical, 6)
         }
     }
-
-    /// Live state while a session runs, otherwise what the feature is for.
-    private var activitySummary: String {
-        // Missing permission has its own row below, so it isn't repeated here.
-        guard state.config.simulateActivity, state.canPost else { return "Keeps chat apps showing you as active" }
-        return state.isActive && !state.activityStatus.isEmpty ? state.activityStatus : "Starts with each session"
-    }
 }
 
-/// Disclosure row label: title, then a one-line secondary value at the trailing edge.
-struct DisclosureSummary: View {
-    let title: String
-    let value: String
-    var body: some View {
-        HStack {
-            Text(title).layoutPriority(1)
-            Spacer(minLength: 8)
-            Text(value).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
-        }
-        .accessibilityElement(children: .combine)
-    }
-}
-
-/// Top row in the Wi‑Fi / Bluetooth style: session gauge, state, master switch.
-struct StatusRow: View {
+/// Top row of each feature card, in the Wi‑Fi / Bluetooth style: ring, name, state, switch.
+struct FeatureHeader: View {
     @EnvironmentObject var state: AppState
+    let feature: Feature
 
     var body: some View {
+        let s = state[feature]
         HStack(spacing: 10) {
-            Gauge(value: state.ringProgress) {
+            Gauge(value: s.progress) {
                 EmptyView()
             } currentValueLabel: {
-                Image(systemName: state.isActive ? state.config.menuIcon.active : state.config.menuIcon.idle)
-                    .font(.system(size: 17, weight: .regular))
-                    .foregroundStyle(state.isActive ? Color.accentColor : Color.secondary)
+                Image(systemName: symbol(on: s.isOn))
+                    .font(.system(size: 15, weight: .regular))
+                    .foregroundStyle(s.isOn ? Color.accentColor : Color.secondary)
             }
             .gaugeStyle(.accessoryCircularCapacity)
-            .tint(state.isActive ? Color.accentColor : Color.secondary)
+            .tint(s.isOn ? Color.accentColor : Color.secondary)
             .scaleEffect(0.62)
             .frame(width: 36, height: 36)
-            .animation(.linear(duration: 0.25), value: state.ringProgress)
-            .accessibilityLabel(state.isActive ? "Session time left" : "No session")
-            .accessibilityValue(Text("\(Int(state.ringProgress * 100)) percent"))
+            .animation(.linear(duration: 0.25), value: s.progress)
+            .accessibilityLabel(s.isOn ? "\(feature.title) time left" : "\(feature.title) off")
+            .accessibilityValue(Text("\(Int(s.progress * 100)) percent"))
 
             VStack(alignment: .leading, spacing: 1) {
-                Text(state.isActive ? "Awake" : "Driftly").font(.headline)
-                Text(state.status)
+                Text(feature.title).font(.headline)
+                Text(s.status)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -217,38 +185,72 @@ struct StatusRow: View {
                     .contentTransition(.numericText())
             }
             Spacer()
-            Toggle("Keep awake", isOn: Binding(get: { state.isActive }, set: { _ in state.toggle() }))
+            Toggle(feature.title, isOn: Binding(get: { s.isOn }, set: { _ in state.toggle(feature) }))
                 .toggleStyle(.switch)
                 .labelsHidden()
         }
     }
+
+    private func symbol(on: Bool) -> String {
+        switch feature {
+        case .awake: on ? "sun.max.fill" : "sun.max"
+        case .drift: on ? "cursorarrow.motionlines" : "cursorarrow"
+        }
+    }
 }
 
-/// How long a session lasts and what happens to the display.
-struct SessionRows: View {
+/// How long a feature stays on when turned on by hand, plus the time for "Until a time".
+struct LengthRows: View {
     @EnvironmentObject var state: AppState
+    let feature: Feature
+    let title: String
+    var icon: (String, Color)?
 
     var body: some View {
-        Picker(selection: $state.config.length) {
-            Text("Indefinitely").tag(SessionLength.indefinitely)
+        let settings = Config.settings(feature)
+        Picker(selection: $state.config[dynamicMember: settings.appending(path: \.length)]) {
+            Text(Summary.length(.indefinitely)).tag(SessionLength.indefinitely)
             Divider()
             ForEach(SessionLength.presets, id: \.self) { Text(Summary.length($0)).tag($0) }
             Divider()
-            Text("Until a time").tag(SessionLength.untilTime)
+            Text(Summary.length(.untilTime)).tag(SessionLength.untilTime)
         } label: {
-            Label { Text("Keep awake") } icon: { IconTile(symbol: "clock.fill", tint: .orange) }
+            if let icon {
+                Label { Text(title) } icon: { IconTile(symbol: icon.0, tint: icon.1) }
+            } else {
+                Text(title)
+            }
         }
-        .help(state.isActive ? "Changing this restarts the countdown from now." : "Applies when you start a session.")
-        if state.config.length == .untilTime {
-            DatePicker("Until", selection: clockBinding($state.config.untilTime), displayedComponents: .hourAndMinute)
+        .help(state[feature].isOn ? "Changing this restarts the countdown from now." : "Applies when you turn \(feature.title) on.")
+        if state.config[feature].length == .untilTime {
+            DatePicker("Until", selection: clockBinding($state.config[dynamicMember: settings.appending(path: \.untilTime)]),
+                       displayedComponents: .hourAndMinute)
         }
-        Picker(selection: $state.config.display) {
-            Text("Stays on").tag(DisplayMode.stayOn)
-            Text("Can sleep").tag(DisplayMode.canSleep)
-        } label: {
-            Label { Text("Display") } icon: { IconTile(symbol: "display", tint: .indigo) }
+    }
+}
+
+/// A row that opens another page: icon tile, title, optional value, chevron.
+struct NavigationRow: View {
+    let title: String
+    let symbol: String
+    let tint: Color
+    var value: String?
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            LabeledContent {
+                HStack(spacing: 6) {
+                    if let value { Text(value) }
+                    Image(systemName: "chevron.right").imageScale(.small)
+                }
+                .foregroundStyle(.secondary)
+            } label: {
+                Label { Text(title) } icon: { IconTile(symbol: symbol, tint: tint) }
+            }
+            .contentShape(Rectangle())
         }
-        .help("With Can sleep, the screen turns off as usual but the Mac stays awake.")
+        .buttonStyle(.plain)
     }
 }
 

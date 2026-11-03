@@ -29,7 +29,7 @@ enum DriveKeeper {
         panel.canChooseFiles = false
         panel.directoryURL = URL(fileURLWithPath: "/Volumes")
         panel.prompt = "Keep Awake"
-        panel.message = "Choose the drive Driftly should keep awake during sessions."
+        panel.message = "Choose the drive Driftly should keep awake while Awake is on."
         NSApp.activate(ignoringOtherApps: true)
         guard panel.runModal() == .OK, let url = panel.url,
               let bookmark = try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil,
@@ -49,11 +49,21 @@ enum DriveKeeper {
     }
 }
 
-/// Time spent awake per day, kept for the last 60 days.
+/// Time each feature was on per day, kept for the last 60 days.
 struct Stats: Codable {
-    private var seconds: [String: TimeInterval] = [:]
-    private var sessions: [String: Int] = [:]
+    private var seconds: [String: TimeInterval] = [:]          // Awake
+    private var driftSeconds: [String: TimeInterval] = [:]
     private static let key = "stats.v1"
+    private enum CodingKeys: String, CodingKey { case seconds, driftSeconds }
+
+    init() {}
+
+    /// Tolerates older saves, which had only Awake time.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        seconds = try c.decodeIfPresent([String: TimeInterval].self, forKey: .seconds) ?? [:]
+        driftSeconds = try c.decodeIfPresent([String: TimeInterval].self, forKey: .driftSeconds) ?? [:]
+    }
 
     static func load() -> Stats {
         UserDefaults.standard.data(forKey: key).flatMap { try? JSONDecoder().decode(Stats.self, from: $0) } ?? Stats()
@@ -68,31 +78,35 @@ struct Stats: Codable {
         return String(format: "%04d-%02d-%02d", c.year ?? 0, c.month ?? 0, c.day ?? 0)
     }
 
-    mutating func add(_ dt: TimeInterval, at date: Date) { seconds[Self.day(date), default: 0] += dt }
+    private func days(_ f: Feature) -> [String: TimeInterval] { f == .awake ? seconds : driftSeconds }
 
-    mutating func countSession(at date: Date) {
-        sessions[Self.day(date), default: 0] += 1
+    mutating func add(_ dt: TimeInterval, _ f: Feature, at date: Date) {
+        if f == .awake { seconds[Self.day(date), default: 0] += dt } else { driftSeconds[Self.day(date), default: 0] += dt }
+    }
+
+    mutating func prune(at date: Date) {
         let keep = Set((0..<60).compactMap { Calendar.current.date(byAdding: .day, value: -$0, to: date) }.map(Self.day))
         seconds = seconds.filter { keep.contains($0.key) }
-        sessions = sessions.filter { keep.contains($0.key) }
+        driftSeconds = driftSeconds.filter { keep.contains($0.key) }
     }
 
-    func today(_ now: Date = Date()) -> (time: TimeInterval, sessions: Int) {
-        (seconds[Self.day(now)] ?? 0, sessions[Self.day(now)] ?? 0)
-    }
+    func today(_ f: Feature, _ now: Date = Date()) -> TimeInterval { days(f)[Self.day(now)] ?? 0 }
 
     /// Since the start of this calendar week.
-    func thisWeek(_ now: Date = Date()) -> TimeInterval {
+    func thisWeek(_ f: Feature, _ now: Date = Date()) -> TimeInterval {
         let cal = Calendar.current
         guard let start = cal.dateInterval(of: .weekOfYear, for: now)?.start else { return 0 }
-        let days = cal.dateComponents([.day], from: start, to: now).day ?? 0
-        return (0...days).compactMap { cal.date(byAdding: .day, value: $0, to: start) }
-            .reduce(0) { $0 + (seconds[Self.day($1)] ?? 0) }
+        let count = cal.dateComponents([.day], from: start, to: now).day ?? 0
+        let d = days(f)
+        return (0...count).compactMap { cal.date(byAdding: .day, value: $0, to: start) }
+            .reduce(0) { $0 + (d[Self.day($1)] ?? 0) }
     }
 }
 
+/// Statistics rounded to the minute.
 struct StatsSnapshot: Equatable {
-    var today: TimeInterval = 0
-    var sessions = 0
-    var week: TimeInterval = 0
+    var awakeToday: TimeInterval = 0
+    var awakeWeek: TimeInterval = 0
+    var driftToday: TimeInterval = 0
+    var driftWeek: TimeInterval = 0
 }

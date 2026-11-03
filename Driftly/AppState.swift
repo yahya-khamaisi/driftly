@@ -1,8 +1,9 @@
 import AppKit
 import ServiceManagement
 
-/// The controller: owns config, runs keep-awake sessions (started by hand or by a trigger),
-/// and while a session runs, decides whether to simulate activity.
+/// The controller: owns config and runs Driftly's two features side by side. Awake holds off
+/// sleep; Drift simulates activity. Each is turned on by hand or by a trigger, and each has
+/// its own length, lock behavior and notification.
 @MainActor
 final class AppState: ObservableObject {
     @Published var config = Config.load() {
@@ -12,14 +13,19 @@ final class AppState: ObservableObject {
             configChanged(from: oldValue)
         }
     }
-    @Published private(set) var isActive = false
-    /// Header subtitle: time left, what's keeping the session going, or "Off".
-    @Published private(set) var status = "Off"
-    /// Simulate activity row subtitle while a session runs: waiting, next move, or paused.
-    @Published private(set) var activityStatus = ""
-    /// 0…1 for the header ring: share of a timed session still to go; full otherwise.
-    @Published private(set) var ringProgress = 0.0
-    /// "1:24" for the menu bar while a timed session runs.
+
+    /// What the panel shows for each feature.
+    struct FeatureState: Equatable {
+        var isOn = false
+        /// Header subtitle: time left, what's keeping it on, the next move, or "Off".
+        var status = "Off"
+        /// 0…1 for the header ring: share of a timed run still to go; full otherwise.
+        var progress = 0.0
+    }
+
+    @Published private(set) var awake = FeatureState()
+    @Published private(set) var drift = FeatureState()
+    /// "1:24" for the menu bar while a timed Awake runs.
     @Published private(set) var timeLeft: String?
     @Published private(set) var canPost = InputPoster.canPost
     @Published private(set) var canListen = InputPoster.canListen
@@ -30,19 +36,23 @@ final class AppState: ObservableObject {
     enum Source: Equatable { case manual, trigger(UUID) }
     private enum EndReason { case manual, expired, battery, triggers }
 
+    private struct Run {
+        var source: Source = .manual
+        var startedAt = Date()
+        var endsAt: Date?
+        /// Triggers the user overrode by turning the feature off; cleared once they stop matching.
+        var suppressed: Set<UUID> = []
+    }
+
     private let activity = ActivityMonitor()
     private let system = SystemPauses()
     private let power = PowerAssertion()
     private let probes = TriggerProbes()
     private lazy var mover = Mover(activity: activity)
     private var timer: Timer?
-    private var hotKey: HotKey?
+    private var hotKeys: [HotKey] = []
 
-    private(set) var source: Source = .manual
-    private var startedAt = Date()
-    private var endsAt: Date?
-    /// Triggers the user overrode by ending their session; cleared once they stop matching.
-    private var suppressed: Set<UUID> = []
+    private var runs: [Feature: Run] = [.awake: Run(), .drift: Run()]
     private var matched: Set<UUID> = []
     private var lastTriggerCheck = Date.distantPast
     private var lastTick = Date()
@@ -59,8 +69,8 @@ final class AppState: ObservableObject {
         activity.start()
         // Returning from lock/sleep counts as activity, so we wait the full idle time again.
         system.onResume = { [weak self] in self?.activity.markActive() }
-        registerHotKey()
-        if config.wasActive { start(.manual) }
+        registerHotKeys()
+        for f in Feature.allCases where config[f].wasOn { start(f, .manual) }
 
         // 4 Hz keeps moves within ~0.25s of the configured interval.
         let t = Timer(timeInterval: 0.25, repeats: true) { [weak self] _ in
@@ -68,14 +78,30 @@ final class AppState: ObservableObject {
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t
+        stats.prune(at: Date())
         refreshStats()
         tick()
     }
 
+    subscript(f: Feature) -> FeatureState { f == .awake ? awake : drift }
+
+    private static func published(_ f: Feature) -> ReferenceWritableKeyPath<AppState, FeatureState> {
+        f == .awake ? \.awake : \.drift
+    }
+
+    /// Whether the menu-bar icon shows as on.
+    var iconLit: Bool {
+        switch config.iconFor {
+        case .either: awake.isOn || drift.isOn
+        case .awake: awake.isOn
+        case .drift: drift.isOn
+        }
+    }
+
     // MARK: - User actions
 
-    /// Manual start/stop. Stopping a triggered session holds it off until its trigger stops matching.
-    func toggle() { isActive ? end(.manual) : start(.manual) }
+    /// Turning a triggered feature off holds it off until its trigger stops matching.
+    func toggle(_ f: Feature) { self[f].isOn ? end(f, .manual) : start(f, .manual) }
 
     func addClickPoint() {
         ClickPointPicker.pick { [weak self] point in
@@ -91,75 +117,82 @@ final class AppState: ObservableObject {
     }
 
     private func refreshStats() {
-        let today = stats.today()
-        update(\.statsSnapshot, StatsSnapshot(today: (today.time / 60).rounded(.down) * 60,
-                                              sessions: today.sessions,
-                                              week: (stats.thisWeek() / 60).rounded(.down) * 60))
+        let minute = { (t: TimeInterval) in (t / 60).rounded(.down) * 60 }
+        update(\.statsSnapshot, StatsSnapshot(awakeToday: minute(stats.today(.awake)),
+                                              awakeWeek: minute(stats.thisWeek(.awake)),
+                                              driftToday: minute(stats.today(.drift)),
+                                              driftWeek: minute(stats.thisWeek(.drift))))
     }
 
-    private func registerHotKey() {
-        hotKey = nil
-        hotKey = HotKey(config.shortcut) { [weak self] in
-            DispatchQueue.main.async { MainActor.assumeIsolated { self?.toggle() } }
+    private func registerHotKeys() {
+        hotKeys = []
+        hotKeys = Feature.allCases.enumerated().map { i, f in
+            HotKey(config[f].shortcut, id: UInt32(i + 1)) { [weak self] in
+                DispatchQueue.main.async { MainActor.assumeIsolated { self?.toggle(f) } }
+            }
         }
     }
 
-    // MARK: - Sessions
+    // MARK: - Runs
 
-    private func start(_ from: Source) {
-        guard !isActive else { return }
-        isActive = true
-        source = from
-        startedAt = Date()
-        endsAt = from == .manual ? computeEnd(from: startedAt) : nil
-        if from == .manual { config.wasActive = true }
-        if config.simulateActivity, !InputPoster.canPost { InputPoster.requestAccess() }
-        lastCycle = .distantPast
-        rollTiming()
-        stats.countSession(at: startedAt)
-        refreshStats()
+    private func start(_ f: Feature, _ from: Source) {
+        guard !self[f].isOn else { return }
+        self[keyPath: Self.published(f)].isOn = true
+        let now = Date()
+        runs[f]?.source = from
+        runs[f]?.startedAt = now
+        runs[f]?.endsAt = from == .manual ? computeEnd(f, from: now) : nil
+        if from == .manual { config[keyPath: Config.settings(f)].wasOn = true }
+        if f == .drift {
+            if !InputPoster.canPost { InputPoster.requestAccess() }
+            lastCycle = .distantPast
+            rollTiming()
+        }
         tick()
     }
 
-    private func end(_ reason: EndReason) {
-        guard isActive else { return }
-        let wasTriggered = source != .manual
-        isActive = false
-        endsAt = nil
-        source = .manual
-        config.wasActive = false
-        // Ending by hand (or on low battery) overrides every trigger that's currently true.
-        if reason != .triggers { suppressed = matched }
+    private func end(_ f: Feature, _ reason: EndReason) {
+        guard self[f].isOn else { return }
+        let wasTriggered = runs[f]?.source != .manual
+        self[keyPath: Self.published(f)].isOn = false
+        runs[f]?.endsAt = nil
+        runs[f]?.source = .manual
+        config[keyPath: Config.settings(f)].wasOn = false
+        // Turning off by hand (or on low battery) overrides every trigger for it that's currently true.
+        if reason != .triggers { runs[f]?.suppressed = matched }
         stats.save()
-        if config.notifyOnEnd, reason != .manual {
+        if config[f].notify, reason != .manual {
             let body = switch reason {
-            case .expired: "Your Mac can sleep again."
+            case .expired: f == .awake ? "Your Mac can sleep again." : "Driftly stopped simulating activity."
             case .battery: "Battery dropped below \(config.batteryCutoff)%."
             default: wasTriggered ? "Its trigger no longer applies." : ""
             }
-            Notifier.post("Driftly session ended", body)
+            Notifier.post("\(f.title) turned off", body)
         }
         tick()
     }
 
-    private func computeEnd(from now: Date) -> Date? {
-        switch config.length {
+    private func computeEnd(_ f: Feature, from now: Date) -> Date? {
+        switch config[f].length {
         case .indefinitely: nil
         case .minutes(let m): now.addingTimeInterval(TimeInterval(m * 60))
-        case .untilTime: Schedule.next(config.untilTime, after: now, natural: config.naturalMode)
+        case .untilTime: Schedule.next(config[f].untilTime, after: now, natural: config.naturalMode)
         }
     }
 
     private func configChanged(from old: Config) {
-        // Picking a new length during a manual session restarts the countdown from now.
-        if (config.length != old.length || config.untilTime != old.untilTime), isActive, source == .manual {
-            startedAt = Date()
-            endsAt = computeEnd(from: startedAt)
+        for f in Feature.allCases {
+            // Picking a new length while on by hand restarts the countdown from now.
+            if config[f].length != old[f].length || config[f].untilTime != old[f].untilTime,
+               self[f].isOn, runs[f]?.source == .manual {
+                runs[f]?.startedAt = Date()
+                runs[f]?.endsAt = computeEnd(f, from: Date())
+            }
+            if config[f].notify && !old[f].notify { Notifier.requestAuthorization() }
         }
         if config.triggers != old.triggers { lastTriggerCheck = .distantPast }
         if config.startAfterIdle != old.startAfterIdle || config.interval != old.interval { rollTiming() }
-        if config.shortcut != old.shortcut { registerHotKey() }
-        if config.notifyOnEnd && !old.notifyOnEnd { Notifier.requestAuthorization() }
+        if config.awake.shortcut != old.awake.shortcut || config.drift.shortcut != old.drift.shortcut { registerHotKeys() }
         if config.launchAtLogin != old.launchAtLogin {
             try? config.launchAtLogin ? SMAppService.mainApp.register() : SMAppService.mainApp.unregister()
         }
@@ -186,47 +219,51 @@ final class AppState: ObservableObject {
             lastTriggerCheck = now
             evaluateTriggers(now)
         }
-        if isActive, let endsAt, now >= endsAt { end(.expired); return }
-        if isActive, config.batteryCutoff > 0, !TriggerProbes.onACPower(),
+        for f in Feature.allCases where self[f].isOn {
+            if let endsAt = runs[f]?.endsAt, now >= endsAt { end(f, .expired); return }
+        }
+        if awake.isOn, config.batteryCutoff > 0, !TriggerProbes.onACPower(),
            let level = TriggerProbes.batteryLevel(), level < config.batteryCutoff {
-            end(.battery)
+            end(.awake, .battery)
             return
         }
 
-        let lockedPause = system.screenLocked && config.whenLocked == .pause
-        power.hold(system: isActive, display: isActive && config.display == .stayOn && !lockedPause)
+        let lockedPause = system.screenLocked && config.awake.whenLocked == .pause
+        power.hold(system: awake.isOn, display: awake.isOn && config.display == .stayOn && !lockedPause)
 
-        guard isActive else {
-            update(\.status, offStatus(now))
-            update(\.activityStatus, "")
-            update(\.ringProgress, 0)
-            update(\.timeLeft, nil)
-            return
+        if awake.isOn {
+            stats.add(dt, .awake, at: now)
+            if let bookmark = config.keepDriveBookmark, now.timeIntervalSince(lastDriveTouch) >= DriveKeeper.interval {
+                lastDriveTouch = now
+                DispatchQueue.global(qos: .utility).async { DriveKeeper.touch(bookmark) }
+            }
+            lockIfIdle(now)
+        }
+        if drift.isOn { stats.add(dt, .drift, at: now) }
+        if awake.isOn || drift.isOn {
+            refreshStats()
+            if now.timeIntervalSince(lastStatsSave) > 30 { stats.save(); lastStatsSave = now }
         }
 
-        stats.add(dt, at: now)
-        refreshStats()
-        if now.timeIntervalSince(lastStatsSave) > 30 { stats.save(); lastStatsSave = now }
-        if let bookmark = config.keepDriveBookmark, now.timeIntervalSince(lastDriveTouch) >= DriveKeeper.interval {
-            lastDriveTouch = now
-            DispatchQueue.global(qos: .utility).async { DriveKeeper.touch(bookmark) }
-        }
-        lockIfIdle(now)
-        updateSessionStatus(now)
-
-        guard config.simulateActivity else { update(\.activityStatus, ""); return }
-        simulateActivity(now)
+        let activityStatus = drift.isOn ? simulateActivity(now) : ""
+        updateStatus(.awake, now, detail: nil)
+        updateStatus(.drift, now, detail: activityStatus)
     }
 
     private func evaluateTriggers(_ now: Date) {
         matched = probes.matching(config.triggers, natural: config.naturalMode, now: now)
-        suppressed.formIntersection(matched)
-        let live = config.triggers.map(\.id).filter { matched.contains($0) && !suppressed.contains($0) }
-        if !isActive, let first = live.first {
-            start(.trigger(first))
-        } else if isActive, case .trigger(let id) = source, !live.contains(id) {
-            // Hand over to another trigger that's still true, or end.
-            if let next = live.first { source = .trigger(next) } else { end(.triggers) }
+        for f in Feature.allCases {
+            runs[f]?.suppressed.formIntersection(matched)
+            let suppressed = runs[f]?.suppressed ?? []
+            let live = config.triggers
+                .filter { $0.target.includes(f) && matched.contains($0.id) && !suppressed.contains($0.id) }
+                .map(\.id)
+            if !self[f].isOn, let first = live.first {
+                start(f, .trigger(first))
+            } else if self[f].isOn, case .trigger(let id) = runs[f]?.source, !live.contains(id) {
+                // Hand over to another trigger that's still true, or turn off.
+                if let next = live.first { runs[f]?.source = .trigger(next) } else { end(f, .triggers) }
+            }
         }
     }
 
@@ -238,38 +275,52 @@ final class AppState: ObservableObject {
         InputPoster.lockScreen()
     }
 
-    private func updateSessionStatus(_ now: Date) {
-        if let endsAt {
+    /// `detail` is Drift's live activity line.
+    private func updateStatus(_ f: Feature, _ now: Date, detail: String?) {
+        let path = Self.published(f)
+        guard self[f].isOn, let run = runs[f] else {
+            update(path.appending(path: \.status), offStatus(f, now))
+            update(path.appending(path: \.progress), 0)
+            if f == .awake { update(\.timeLeft, nil) }
+            return
+        }
+        if let endsAt = run.endsAt {
             let left = max(0, endsAt.timeIntervalSince(now))
-            let total = max(1, endsAt.timeIntervalSince(startedAt))
-            update(\.status, "\(Summary.clock(left, seconds: true)) left · until \(Summary.timeOfDay(endsAt))")
-            update(\.ringProgress, left / total)
-            update(\.timeLeft, config.showTimeLeft ? Summary.clock(left, seconds: false) : nil)
+            let total = max(1, endsAt.timeIntervalSince(run.startedAt))
+            let status = if let detail { "\(Summary.clock(left, seconds: false)) left · \(detail)" }
+                         else { "\(Summary.clock(left, seconds: true)) left · until \(Summary.timeOfDay(endsAt))" }
+            update(path.appending(path: \.status), status)
+            update(path.appending(path: \.progress), left / total)
+            if f == .awake { update(\.timeLeft, config.showTimeLeft ? Summary.clock(left, seconds: false) : nil) }
         } else {
-            if case .trigger(let id) = source, let t = config.triggers.first(where: { $0.id == id }) {
-                update(\.status, Summary.whileText(t))
+            let status: String
+            if let detail {
+                status = detail
+            } else if case .trigger(let id) = run.source, let t = config.triggers.first(where: { $0.id == id }) {
+                status = Summary.whileText(t)
             } else {
-                update(\.status, "Until you turn it off")
+                status = "Until you turn it off"
             }
-            update(\.ringProgress, 1)
-            update(\.timeLeft, nil)
+            update(path.appending(path: \.status), status)
+            update(path.appending(path: \.progress), 1)
+            if f == .awake { update(\.timeLeft, nil) }
         }
     }
 
-    private func simulateActivity(_ now: Date) {
-        if let blocker = blockingReason() { update(\.activityStatus, blocker); return }
+    /// Moves when due; returns what Drift is doing right now.
+    private func simulateActivity(_ now: Date) -> String {
+        if let blocker = blockingReason() { return blocker }
 
         let idle = activity.idleSeconds
         guard idle >= idleThreshold else {
-            update(\.activityStatus, "Waiting for idle · \(Int((idleThreshold - idle).rounded(.up)))s")
-            return
+            return "Waiting for idle · \(Int((idleThreshold - idle).rounded(.up)))s"
         }
 
         // First move as soon as the idle threshold is reached, then every `gap` seconds.
         let firstAfterActivity = lastCycle < activity.lastUserActivity
         let remaining = firstAfterActivity ? 0 : max(0, gap - now.timeIntervalSince(lastCycle))
-        update(\.activityStatus, remaining >= 1 ? "Next move in \(Int(remaining.rounded(.up)))s" : "Moving")
-        guard !cycling, remaining == 0 else { return }
+        let status = remaining >= 1 ? "Next move in \(Int(remaining.rounded(.up)))s" : "Moving"
+        guard !cycling, remaining == 0 else { return status }
         cycling = true
         let started = now   // interval runs start-to-start, so glide time doesn't stretch it
         Task {
@@ -278,25 +329,26 @@ final class AppState: ObservableObject {
             rollTiming()
             cycling = false
         }
+        return status
     }
 
     private func blockingReason() -> String? {
         if !InputPoster.canPost { return "Needs Accessibility permission" }
-        if system.screenLocked && config.whenLocked == .pause { return "Paused · screen locked" }
+        if system.screenLocked && config.drift.whenLocked == .pause { return "Paused · screen locked" }
         if system.sessionInactive { return "Paused · user switched" }
         if system.asleep || system.screensaver { return "Paused · display asleep" }
         if SystemPauses.transientUIOnScreen() { return "Paused · menu or screenshot" }
         return nil
     }
 
-    /// "Off", or when the next scheduled trigger starts.
-    private func offStatus(_ now: Date) -> String {
+    /// "Off", or when the feature's next scheduled trigger starts.
+    private func offStatus(_ f: Feature, _ now: Date) -> String {
         let natural = config.naturalMode
         let next = config.triggers
-            .filter { $0.enabled && $0.kind == .schedule }
+            .filter { $0.enabled && $0.kind == .schedule && $0.target.includes(f) }
             .compactMap { Schedule(from: $0.from, to: $0.to, days: $0.days, natural: natural).nextStart(after: now) }
             .min()
-        guard let next else { return "Off" }
+        guard let next else { return f == .awake ? "Off · your Mac sleeps as usual" : "Off · keeps chat apps active" }
         let cal = Calendar.current
         let day = cal.isDateInToday(next) ? "today" : cal.isDateInTomorrow(next) ? "tomorrow"
             : cal.weekdaySymbols[cal.component(.weekday, from: next) - 1]

@@ -72,7 +72,7 @@ final class SystemPauses {
     }
 }
 
-/// Keeps the Mac awake during a session: always the system, and the display unless it may sleep.
+/// Keeps the Mac awake while Awake is on: always the system, and the display unless it may sleep.
 final class PowerAssertion {
     private var systemID: IOPMAssertionID?
     private var displayID: IOPMAssertionID?
@@ -86,7 +86,7 @@ final class PowerAssertion {
         if on, id == nil {
             var new: IOPMAssertionID = 0
             if IOPMAssertionCreateWithName(type as CFString, IOPMAssertionLevel(kIOPMAssertionLevelOn),
-                                           "Driftly session" as CFString, &new) == kIOReturnSuccess {
+                                           "Driftly Awake" as CFString, &new) == kIOReturnSuccess {
                 id = new
             }
         } else if !on, let current = id {

@@ -34,9 +34,17 @@ enum Summary {
 
     static func length(_ l: SessionLength) -> String {
         switch l {
-        case .indefinitely: "Indefinitely"
-        case .minutes(let m): m < 60 ? "For \(m) minutes" : m == 60 ? "For 1 hour" : "For \(m / 60) hours"
+        case .indefinitely: "Until turned off"
+        case .minutes(let m): m < 60 ? "\(m) minutes" : m == 60 ? "1 hour" : "\(m / 60) hours"
         case .untilTime: "Until a time"
+        }
+    }
+
+    static func target(_ t: FeatureTarget) -> String {
+        switch t {
+        case .awake: "Awake"
+        case .drift: "Drift"
+        case .both: "Both"
         }
     }
 

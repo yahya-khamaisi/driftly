@@ -31,27 +31,6 @@ struct IconTile: View {
     }
 }
 
-/// Disclosure row label: icon tile, title, one-line summary.
-struct SectionLabel: View {
-    let symbol: String
-    let tint: Color
-    let title: String
-    let summary: String
-    var body: some View {
-        Label {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(title)
-                Text(summary)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-        } icon: {
-            IconTile(symbol: symbol, tint: tint)
-        }
-    }
-}
-
 /// A grouped Form (the System Settings look) that sizes itself to its content,
 /// so the menu-bar panel never shows empty space or scrolls needlessly.
 struct FittedForm<Content: View>: View {

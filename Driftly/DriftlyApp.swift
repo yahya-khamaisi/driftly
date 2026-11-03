@@ -19,8 +19,8 @@ struct DriftlyApp: App {
         } label: {
             let icon = state.config.menuIcon
             HStack(spacing: 3) {
-                Image(systemName: state.isActive ? icon.active : icon.idle)
-                    .opacity(!state.isActive && state.config.dimWhenIdle ? 0.45 : 1)
+                Image(systemName: state.iconLit ? icon.active : icon.idle)
+                    .opacity(!state.iconLit && state.config.dimWhenIdle ? 0.45 : 1)
                 if let left = state.timeLeft {
                     Text(left).monospacedDigit()
                 }
@@ -35,7 +35,7 @@ extension AppState {
 }
 
 #if DEBUG
-/// `-preview [main|settings|triggers|editor|all] [light|dark]` shows the panel in a borderless, menu-like
+/// `-preview [main|awake|drift|settings|triggers|editor|all] [light|dark]` shows the panel in a borderless, menu-like
 /// window so it can be captured for design review without the menu bar.
 enum DesignPreview {
     /// Returns true when running as a design preview.
@@ -44,10 +44,12 @@ enum DesignPreview {
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: "-preview") else { return false }
         let pages: [PanelPage] = args.contains("settings") ? [.settings]
+            : args.contains("awake") ? [.awake]
+            : args.contains("drift") ? [.drift]
             : args.contains("onboarding") ? [.onboarding]
             : args.contains("triggers") ? [.triggers]
             : args.contains("editor") ? [.editTrigger(nil)]
-            : args.contains("all") ? [.main, .triggers, .editTrigger(nil), .settings] : [.main]
+            : args.contains("all") ? [.main, .awake, .drift, .triggers, .editTrigger(nil), .settings] : [.main]
         DispatchQueue.main.async {
             if args.contains("dark") { NSApp.appearance = NSAppearance(named: .darkAqua) }
             if args.contains("light") { NSApp.appearance = NSAppearance(named: .aqua) }

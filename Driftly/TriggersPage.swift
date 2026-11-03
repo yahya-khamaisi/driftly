@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// The list of triggers: each starts a session automatically while its condition is true.
+/// The list of triggers: each turns Awake, Drift or both on while its condition is true.
 struct TriggersPage: View {
     @EnvironmentObject var state: AppState
     let back: () -> Void
@@ -13,7 +13,7 @@ struct TriggersPage: View {
             FittedForm(topEdge: 4) {
                 Section {
                     if state.config.triggers.isEmpty {
-                        Text("Start a session automatically, for example during work hours or while an app is open.")
+                        Text("Turn Awake or Drift on automatically, for example during work hours or while an app is open.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }
@@ -26,7 +26,7 @@ struct TriggersPage: View {
                     }
                     .buttonStyle(.borderless)
                 } footer: {
-                    Text("A triggered session uses your settings from the main panel and ends when its trigger stops matching.")
+                    Text("A trigger turns its feature on while it matches, and off when it stops.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -60,6 +60,7 @@ struct TriggerRow: View {
             }
             .buttonStyle(.plain)
             .help("Edit trigger")
+            TargetTag(target: trigger.target)
             Toggle(Summary.title(trigger.kind), isOn: $trigger.enabled)
                 .toggleStyle(.switch)
                 .labelsHidden()
@@ -68,6 +69,25 @@ struct TriggerRow: View {
             Button("Edit…", action: edit)
             Button("Delete", role: .destructive, action: delete)
         }
+    }
+}
+
+/// Which feature a trigger turns on, as a small tinted capsule.
+struct TargetTag: View {
+    let target: FeatureTarget
+    var body: some View {
+        let tint: Color = switch target {
+        case .awake: .orange
+        case .drift: .blue
+        case .both: .secondary
+        }
+        Text(Summary.target(target))
+            .font(.caption)
+            .foregroundStyle(tint)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 1)
+            .background(tint.opacity(0.14), in: .capsule)
+            .accessibilityLabel("Turns on \(Summary.target(target))")
     }
 }
 
@@ -86,8 +106,8 @@ struct TriggerIcon: View {
 
 // MARK: - Editor
 
-/// Adds or edits one trigger: a condition and its options. Nothing else; the session
-/// itself is configured once, on the main page.
+/// Adds or edits one trigger: what it turns on, a condition and its options. How long and how
+/// each feature runs is set on that feature's own page.
 struct TriggerEditor: View {
     @EnvironmentObject var state: AppState
     let id: UUID?
@@ -108,6 +128,13 @@ struct TriggerEditor: View {
         VStack(spacing: 0) {
             PageHeader(title: id == nil ? "New Trigger" : "Edit Trigger", back: done)
             FittedForm(topEdge: 4) {
+                Section {
+                    Picker("Turns on", selection: $draft.target) {
+                        ForEach(FeatureTarget.allCases) { Text(Summary.target($0)).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
                 Section {
                     Picker("Start when", selection: $draft.kind) {
                         ForEach(TriggerKind.allCases) { kind in

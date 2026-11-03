@@ -46,7 +46,7 @@ enum MenuIcon: String, Codable, CaseIterable, Identifiable {
         case .mouse: "Mouse"
         case .path: "Drift path"
         case .pulse: "Keep-alive pulse"
-        case .eye: "Awake"
+        case .eye: "Eye"
         case .coffee: "Coffee"
         case .wave: "Wave"
         case .power: "Power"
@@ -98,16 +98,51 @@ enum LockBehavior: String, Codable, CaseIterable, Identifiable {
     var id: Self { self }
 }
 
-/// Everything the user can configure. Persisted as JSON in UserDefaults.
-struct Config: Codable, Equatable {
-    // Session
+/// Driftly's two features: Awake holds off sleep, Drift simulates activity. Each runs on its own.
+enum Feature: String, Codable, CaseIterable, Identifiable {
+    case awake, drift
+    var id: Self { self }
+    var title: String { self == .awake ? "Awake" : "Drift" }
+}
+
+/// What a trigger turns on.
+enum FeatureTarget: String, Codable, CaseIterable, Identifiable {
+    case awake, drift, both
+    var id: Self { self }
+    func includes(_ f: Feature) -> Bool { self == .both || rawValue == f.rawValue }
+}
+
+/// Which feature lights up the menu-bar icon.
+enum IconSource: String, Codable, CaseIterable, Identifiable {
+    case either, awake, drift
+    var id: Self { self }
+}
+
+/// Settings both features have, each set separately.
+struct FeatureSettings: Codable, Equatable {
     var length: SessionLength = .indefinitely
     var untilTime = ClockTime(hour: 17, minute: 30)
-    var display: DisplayMode = .stayOn
+    var whenLocked: LockBehavior = .pause
+    var notify = true
+    var shortcut: Shortcut
+    var wasOn = false                        // restored on launch
+}
+
+/// Everything the user can configure. Persisted as JSON in UserDefaults.
+struct Config: Codable, Equatable {
+    var awake = FeatureSettings(shortcut: .awakeDefault)
+    var drift = FeatureSettings(notify: false, shortcut: .driftDefault)
     var triggers: [Trigger] = []
 
-    // Simulate activity
-    var simulateActivity = true
+    // Awake
+    var display: DisplayMode = .stayOn
+    var showTimeLeft = true
+    var lockAfterIdle: TimeInterval = 0      // 0 = never
+    var batteryCutoff = 5                    // % — turn Awake off on battery below this; 0 = never
+    var keepDriveName: String?
+    var keepDriveBookmark: Data?
+
+    // Drift
     var naturalMode = false
     var silentMode = false
     var startAfterIdle: TimeInterval = 30
@@ -120,21 +155,11 @@ struct Config: Codable, Equatable {
 
     // Menu bar
     var menuIcon: MenuIcon = .cursor
-    var showTimeLeft = true
+    var iconFor: IconSource = .either
     var dimWhenIdle = true
 
     // General
-    var shortcut = Shortcut.default
     var launchAtLogin = false
-    var notifyOnEnd = true
-    var wasActive = false                    // restored on launch ("if it was already active")
-
-    // Power
-    var whenLocked: LockBehavior = .pause
-    var lockAfterIdle: TimeInterval = 0      // 0 = never
-    var batteryCutoff = 5                    // % — end the session on battery below this; 0 = never
-    var keepDriveName: String?
-    var keepDriveBookmark: Data?
 
     var mode: MoveMode {
         get { silentMode ? .silent : naturalMode ? .natural : .standard }
@@ -144,23 +169,32 @@ struct Config: Codable, Equatable {
         }
     }
 
-    private static let key = "config.v2"
-    private static let legacyKey = "config.v1"
+    static func settings(_ f: Feature) -> WritableKeyPath<Config, FeatureSettings> {
+        f == .awake ? \.awake : \.drift
+    }
+
+    subscript(f: Feature) -> FeatureSettings {
+        get { self[keyPath: Self.settings(f)] }
+        set { self[keyPath: Self.settings(f)] = newValue }
+    }
+
+    private static let key = "config.v3"
+    private static let legacyKeys = ["config.v2", "config.v1"]
 
     /// Decodes whatever is stored over the defaults, so settings added in later versions
-    /// don't reset everything else. A v1 config is migrated once.
+    /// don't reset everything else. An older config is migrated once.
     static func load() -> Config {
         let defaults = UserDefaults.standard
         let current = defaults.data(forKey: key)
-        guard let data = current ?? defaults.data(forKey: legacyKey),
+        guard let data = current ?? legacyKeys.lazy.compactMap({ defaults.data(forKey: $0) }).first,
               let stored = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let baseData = try? JSONEncoder().encode(Config()),
-              let base = (try? JSONSerialization.jsonObject(with: baseData)) as? [String: Any],
-              let merged = try? JSONSerialization.data(withJSONObject: base.merging(stored) { $1 }),
+              let base = jsonObject(Config()),
+              let merged = try? JSONSerialization.data(withJSONObject: merge(base, stored)),
               var config = try? JSONDecoder().decode(Config.self, from: merged)
         else { return Config() }
-        if current == nil, let legacy = try? JSONDecoder().decode(LegacyConfig.self, from: data) {
-            config.migrate(legacy)
+        if current == nil {
+            if let legacy = try? JSONDecoder().decode(LegacyConfig.self, from: data) { config.migrate(legacy) }
+            config.save()
         }
         return config
     }
@@ -171,8 +205,30 @@ struct Config: Codable, Equatable {
         }
     }
 
-    /// v1 had Schedule, App Rules and Auto-stop beside the switch; they are triggers now.
+    private static func jsonObject<T: Encodable>(_ value: T) -> [String: Any]? {
+        (try? JSONEncoder().encode(value)).flatMap { try? JSONSerialization.jsonObject(with: $0) } as? [String: Any]
+    }
+
+    /// Stored values win. Awake's and Drift's settings and each trigger are merged one level
+    /// deeper; values inside them (like a length) are taken whole, since enums encode as objects.
+    private static func merge(_ base: [String: Any], _ stored: [String: Any], deep: Bool = true) -> [String: Any] {
+        var out = base
+        for (k, v) in stored {
+            if deep, let b = base[k] as? [String: Any], let s = v as? [String: Any], b["shortcut"] != nil {
+                out[k] = merge(b, s, deep: false)
+            } else if k == "triggers", let list = v as? [[String: Any]], let t = jsonObject(Trigger(kind: .schedule)) {
+                out[k] = list.map { merge(t, $0, deep: false) }
+            } else {
+                out[k] = v
+            }
+        }
+        return out
+    }
+
+    /// v1 had Schedule, App Rules and Auto-stop beside the switch; v2 ran one session with
+    /// activity simulation inside it. Both become Awake, plus Drift where activity was on.
     private mutating func migrate(_ old: LegacyConfig) {
+        let drifted = old.simulateActivity ?? true
         if old.scheduleEnabled == true {
             var t = Trigger(kind: .schedule)
             t.from = old.scheduleFrom ?? t.from
@@ -188,15 +244,25 @@ struct Config: Codable, Equatable {
                 triggers.append(t)
             }
         }
+        for i in triggers.indices { triggers[i].target = drifted ? .both : .awake }
         if old.preventSleep == false { display = .canSleep }
-        if old.pauseWhenLocked == false { whenLocked = .keepGoing }
+        let locked: LockBehavior? = old.whenLocked ?? (old.pauseWhenLocked == false ? .keepGoing : nil)
+        if let locked { awake.whenLocked = locked; drift.whenLocked = locked }
         if old.deactivateEnabled == true, old.deactivateKind == "after", let after = old.deactivateAfter {
-            length = .minutes(Int(after / 60))
+            awake.length = .minutes(Int(after / 60))
+            drift.length = awake.length
         }
+        if let length = old.length { awake.length = length; drift.length = length }
+        if let until = old.untilTime { awake.untilTime = until; drift.untilTime = until }
+        if let notify = old.notifyOnEnd { awake.notify = notify }
+        if old.wasActive == true { awake.wasOn = true; drift.wasOn = drifted }
+        // The old shortcut started the whole session, which is Awake now.
+        if let s = old.shortcut, s != .driftDefault { awake.shortcut = s }
     }
 }
 
 private struct LegacyConfig: Decodable {
+    // v1
     var scheduleEnabled: Bool?
     var scheduleFrom: ClockTime?
     var scheduleTo: ClockTime?
@@ -209,4 +275,13 @@ private struct LegacyConfig: Decodable {
     var deactivateEnabled: Bool?
     var deactivateKind: String?
     var deactivateAfter: TimeInterval?
+    // v1 and v2
+    var wasActive: Bool?
+    var shortcut: Shortcut?
+    // v2
+    var simulateActivity: Bool?
+    var length: SessionLength?
+    var untilTime: ClockTime?
+    var whenLocked: LockBehavior?
+    var notifyOnEnd: Bool?
 }

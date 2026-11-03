@@ -6,8 +6,8 @@ import IOBluetooth
 import IOKit
 import IOKit.ps
 
-/// What starts a session automatically. A triggered session uses the main panel's display
-/// and activity settings, and ends when no trigger matches any more.
+/// What turns Awake or Drift on automatically. The feature uses its own settings, and turns
+/// off again when no trigger for it matches any more.
 enum TriggerKind: String, Codable, CaseIterable, Identifiable {
     case schedule, app, power, display, device, network, audio, drive, download, cpu
     var id: Self { self }
@@ -33,6 +33,7 @@ struct Trigger: Codable, Identifiable, Equatable {
     var id = UUID()
     var enabled = true
     var kind: TriggerKind
+    var target: FeatureTarget = .awake
 
     var from = ClockTime(hour: 9, minute: 0)        // schedule
     var to = ClockTime(hour: 17, minute: 30)

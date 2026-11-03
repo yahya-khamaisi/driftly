@@ -17,66 +17,34 @@ struct SettingsPage: View {
                             Label(icon.title, systemImage: icon.active).tag(icon)
                         }
                     }
-                    Toggle("Show time left", isOn: $state.config.showTimeLeft)
+                    Picker("Icon lights up for", selection: $state.config.iconFor) {
+                        Text("Awake or Drift").tag(IconSource.either)
+                        Divider()
+                        Text("Awake").tag(IconSource.awake)
+                        Text("Drift").tag(IconSource.drift)
+                    }
                     Toggle("Dim icon when off", isOn: $state.config.dimWhenIdle)
                 }
 
                 Section("General") {
-                    LabeledContent("Shortcut") {
-                        ShortcutRecorder(shortcut: $state.config.shortcut)
-                    }
                     Toggle(isOn: $state.config.launchAtLogin) {
                         Text("Open at login")
-                        Text("Resumes a session that was on when you quit.")
+                        Text("Turns back on what was on when you quit.")
                     }
-                    Toggle("Notify when a session ends", isOn: $state.config.notifyOnEnd)
-                }
-
-                Section("Power") {
-                    Picker("When the screen is locked", selection: $state.config.whenLocked) {
-                        Text("Pause").tag(LockBehavior.pause)
-                        Text("Keep going").tag(LockBehavior.keepGoing)
-                    }
-                    .help("Pause lets the display sleep and stops simulated activity; the Mac stays awake.")
-                    Picker("Lock screen when idle for", selection: $state.config.lockAfterIdle) {
-                        Text("Never").tag(TimeInterval(0))
-                        Divider()
-                        ForEach([60, 120, 300, 600, 900, 1800], id: \.self) { Text(Summary.duration($0)).tag(TimeInterval($0)) }
-                    }
-                    .help("During a session, locks the screen after this long without real input.")
-                    Picker("End session below", selection: $state.config.batteryCutoff) {
-                        Text("Never").tag(0)
-                        Divider()
-                        ForEach([5, 10, 15, 20, 30, 50], id: \.self) { Text("\($0)% battery").tag($0) }
-                    }
-                    LabeledContent("Keep drive awake") {
-                        Menu(state.config.keepDriveName ?? "None") {
-                            Button("None") {
-                                state.config.keepDriveName = nil
-                                state.config.keepDriveBookmark = nil
-                            }
-                            Divider()
-                            Button("Choose Drive…") {
-                                if let drive = DriveKeeper.choose() {
-                                    state.config.keepDriveName = drive.name
-                                    state.config.keepDriveBookmark = drive.bookmark
-                                }
-                            }
-                        }
-                        .fixedSize()
-                    }
-                    .help("Writes a tiny hidden file to the drive once a minute during a session.")
                 }
 
                 Section("Statistics") {
                     LabeledContent("Awake today") {
-                        Text("\(Summary.total(state.statsSnapshot.today)) · this week \(Summary.total(state.statsSnapshot.week))")
+                        Text("\(Summary.total(state.statsSnapshot.awakeToday)) · week \(Summary.total(state.statsSnapshot.awakeWeek))")
                     }
-                    .contextMenu { Button("Reset Statistics", role: .destructive) { state.resetStats() } }
+                    LabeledContent("Drift today") {
+                        Text("\(Summary.total(state.statsSnapshot.driftToday)) · week \(Summary.total(state.statsSnapshot.driftWeek))")
+                    }
                 }
+                .contextMenu { Button("Reset Statistics", role: .destructive) { state.resetStats() } }
 
                 Section {
-                    PermissionRow(title: "Accessibility", detail: "Simulates activity and locks the screen.",
+                    PermissionRow(title: "Accessibility", detail: "Drift and screen lock.",
                                   granted: state.canPost, pane: .accessibility)
                     PermissionRow(title: "Input Monitoring", detail: "Notices when you're typing.",
                                   granted: state.canListen, pane: .inputMonitoring)
@@ -96,15 +64,16 @@ struct SettingsPage: View {
 /// A standard push button that records the next key combination.
 struct ShortcutRecorder: View {
     @Binding var shortcut: Shortcut
+    let defaultShortcut: Shortcut
     @State private var recording = false
     @State private var monitor: Any?
 
     var body: some View {
         HStack(spacing: 6) {
-            if shortcut != .default && !recording {
-                Button { shortcut = .default } label: { Image(systemName: "arrow.uturn.backward") }
+            if shortcut != defaultShortcut && !recording {
+                Button { shortcut = defaultShortcut } label: { Image(systemName: "arrow.uturn.backward") }
                     .buttonStyle(.borderless)
-                    .help("Reset to \(Shortcut.default.display)")
+                    .help("Reset to \(defaultShortcut.display)")
                     .accessibilityLabel("Reset shortcut")
             }
             Button(recording ? "Type Shortcut…" : shortcut.display) { recording ? stop() : start() }

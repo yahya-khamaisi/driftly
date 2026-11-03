@@ -1,6 +1,11 @@
 # Driftly
 
-A native macOS menu-bar app that keeps your Mac awake, for as long as you need or automatically when something happens, and can keep your status active by gently moving the cursor. It's free, has no in-app purchases, and lives entirely in one menu-bar panel.
+A native macOS menu-bar app with two features:
+
+- **Awake** keeps your Mac from sleeping, for as long as you need or automatically when something happens.
+- **Drift** keeps your status active by gently moving the cursor.
+
+Each one has its own switch, settings and shortcut, so you can run either or both. Driftly is free, has no in-app purchases, and lives entirely in one menu-bar panel.
 
 <p>
   <img src="docs/main-light.png" width="340" alt="Driftly panel in light mode">
@@ -9,14 +14,21 @@ A native macOS menu-bar app that keeps your Mac awake, for as long as you need o
 
 ## Features
 
-Every option has exactly one place: the session is set up on the main panel, triggers only decide when it starts, and everything else is in Settings.
+Every option has exactly one place. Each feature's card on the main panel holds its everyday controls, its own page holds the rest, triggers only decide when a feature turns on, and Settings holds what both share.
 
-- **Sessions:** keep the Mac awake indefinitely, for 15 minutes to 8 hours, or until a time. Choose whether the display stays on or can sleep. Picking a new length during a session restarts the countdown.
-- **Simulate activity**, optional within a session:
-  - **Modes:** Standard (straight moves), Natural (curved paths and varied timing), or Silent (no cursor movement).
-  - **Movement:** start after a set idle time and move again at a set interval, in a small, medium or full-screen range.
-  - **Extra activity:** clicks at saved positions, a scroll that returns, or a bare Control tap that types nothing.
-- **Triggers** start a session automatically and end it when they stop matching:
+- **Awake:**
+  - **Duration:** until turned off, 15 minutes to 8 hours, or until a time. Picking a new duration while it's on restarts the countdown.
+  - **Display:** stays on, or can sleep while the Mac stays awake.
+  - **Options page:** time left in the menu bar, pause or keep going while the screen is locked, a notification when it turns off on its own, turn off below a battery level, lock the screen after idle time, keep an external drive from sleeping, and its shortcut (default ⌃⌘A).
+- **Drift:**
+  - **Style:** Standard (straight moves), Natural (curved paths and varied timing), or Silent (no cursor movement).
+  - **Options page:**
+    - **Movement:** start after a set idle time and move again at a set interval, in a small, medium or full-screen range.
+    - **Extra activity:** clicks at saved positions, a scroll that returns, or a bare Control tap that types nothing.
+    - **Session:** run until turned off, for a set time, or until a time; pause or keep going while locked; a notification when it turns off.
+    - **Shortcut:** default ⌃⌘D.
+  - **Smart pausing:** Drift pauses when you use the mouse or keyboard, when you switch users, when the Mac sleeps or the screensaver starts, while a menu is open and during screenshots.
+- **Triggers** turn Awake, Drift or both on automatically, and off again when they stop matching:
   - schedule (weekdays and hours, overnight supported)
   - an app running or in front
   - charger connected, on battery, or battery above a level
@@ -27,14 +39,16 @@ Every option has exactly one place: the session is set up on the main panel, tri
   - a drive mounted
   - a download in progress
   - CPU busier than a threshold
-- **Smart pausing:** simulated activity pauses when you use the mouse or keyboard, when you switch users, when the Mac sleeps or the screensaver starts, while a menu is open and during screenshots.
 - **Settings:**
-  - **Menu bar:** nine icons, time left next to the icon, dim when off.
-  - **General:** a recordable shortcut (default ⌃⌘D), open at login, and a notification when a session ends on its own.
-  - **Power:** pause or keep going while the screen is locked, lock the screen after idle time, end the session below a battery level, and keep an external drive from sleeping.
-  - **Statistics:** time awake today and this week.
+  - **Menu bar:** nine icons, which feature lights the icon up, and dimming when off.
+  - **General:** open at login.
+  - **Statistics:** time Awake and Drift were on today and this week.
   - **Permissions:** shows whether each one is granted and opens System Settings.
 
+<p>
+  <img src="docs/awake-light.png" width="340" alt="Awake options in light mode">
+  <img src="docs/drift-dark.png" width="340" alt="Drift options in dark mode">
+</p>
 <p>
   <img src="docs/triggers-light.png" width="340" alt="Triggers in light mode">
   <img src="docs/settings-dark.png" width="340" alt="Settings in dark mode">
@@ -45,6 +59,7 @@ Every option has exactly one place: the session is set up on the main panel, tri
 - **Stock controls only:** every control is a standard SwiftUI/AppKit control in a System Settings–style grouped form.
 - **Follows the system:** materials, Liquid Glass (macOS 26+), light and dark mode, accent colour, Reduce Transparency and Reduce Motion all come from macOS.
 - **Measured spacing:** the panel has 20pt margins on every side, and all content lines up on one 30pt edge. The values are in [`DesignSystem.swift`](Driftly/DesignSystem.swift).
+- **Balanced layout:** the Awake and Drift cards have the same shape: a header with a ring and switch, two quick settings, and a link to their options.
 - **Keyboard and VoiceOver:** ⌘, opens Settings, ⌘Q quits, Esc goes back, and every icon-only button has a VoiceOver label.
 
 ## Requirements
@@ -60,7 +75,7 @@ Every option has exactly one place: the session is set up on the main panel, tri
 
 On first launch a welcome panel opens under the menu bar and walks you through two permissions:
 
-- **Accessibility:** to simulate activity and lock the screen.
+- **Accessibility:** for Drift and for locking the screen.
 - **Input Monitoring:** to notice when you're typing, so Driftly stays out of the way.
 
 Some triggers ask once for their own access: Location for Wi-Fi network names, Bluetooth for Bluetooth devices, and the Downloads folder for download triggers.
@@ -70,7 +85,7 @@ Some triggers ask once for their own access: Location for Wi-Fi network names, B
 Debug builds can show the panel in a borderless window for screenshots:
 
 ```bash
-Driftly.app/Contents/MacOS/Driftly -preview main dark      # or: settings, triggers, editor, all · light, dark
+Driftly.app/Contents/MacOS/Driftly -preview main dark      # or: awake, drift, settings, triggers, editor, all · light, dark
 ```
 
 ## Project layout
@@ -78,10 +93,11 @@ Driftly.app/Contents/MacOS/Driftly -preview main dark      # or: settings, trigg
 | File | Role |
 |---|---|
 | `DriftlyApp.swift` | `MenuBarExtra` entry point, debug preview harness |
-| `PanelView.swift` | Main page and section rows |
+| `PanelView.swift` | Main page: Awake and Drift cards, shared rows |
+| `FeaturePages.swift` | Awake and Drift option pages |
 | `SettingsPage.swift` | In-panel settings, shortcut recorder, permissions |
 | `DesignSystem.swift` | Layout metrics, icon tiles, fitted grouped form |
-| `AppState.swift` | Controller: sessions, trigger hand-off, power assertions, simulated activity |
+| `AppState.swift` | Controller: runs Awake and Drift independently, trigger hand-off, power assertions, simulated activity |
 | `Triggers.swift` | Trigger model and the system checks behind each kind |
 | `TriggersPage.swift` | Trigger list and editor |
 | `Extras.swift` | Notifications, drive keep-alive, statistics |
@@ -89,6 +105,6 @@ Driftly.app/Contents/MacOS/Driftly -preview main dark      # or: settings, trigg
 | `InputPoster.swift` | `CGEvent` posting and permission checks |
 | `Monitors.swift` | Real-activity detection, system pauses, power assertions |
 | `Schedule.swift` | Schedule windows, "until" times and daily natural-mode jitter |
-| `Config.swift` | Settings model, persisted as JSON |
+| `Config.swift` | Settings model with per-feature settings, persisted as JSON, migrates older versions |
 
 See [`docs/SPEC.md`](docs/SPEC.md) for the full behaviour spec and the macOS APIs behind each feature.
